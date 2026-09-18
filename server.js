@@ -20,9 +20,12 @@ app.post('/generate-image', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Prompt string is required' });
   }
 
+  // Force 1:1 square aspect ratio
+  const formattedPrompt = `Create an image in 1:1 square aspect ratio of: ${prompt}`;
+
   let browser;
   try {
-    console.log(`[Gemini Render] Processing prompt: "${prompt}"`);
+    console.log(`[Gemini Render] Processing 1:1 prompt: "${formattedPrompt}"`);
 
     browser = await chromium.launch({
       headless: true,
@@ -35,7 +38,7 @@ app.post('/generate-image', async (req, res) => {
     });
 
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 }
+      viewport: { width: 1024, height: 1024 }
     });
 
     // Inject Google Gemini session cookies
@@ -70,9 +73,8 @@ app.post('/generate-image', async (req, res) => {
 
     const page = await context.newPage();
     console.log('[Gemini Render] Navigating to Gemini...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 35000 });
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 45000 });
 
-    // Selector strategy for Gemini input box
     const promptSelectors = [
       'div[contenteditable="true"]',
       'rich-textarea div[contenteditable="true"]',
@@ -83,24 +85,21 @@ app.post('/generate-image', async (req, res) => {
     let promptInput = null;
     for (const selector of promptSelectors) {
       try {
-        await page.waitForSelector(selector, { timeout: 8000 });
+        await page.waitForSelector(selector, { timeout: 10000 });
         promptInput = selector;
         break;
-      } catch (e) {
-        // try next
-      }
+      } catch (e) {}
     }
 
     if (!promptInput) {
-      throw new Error('Could not find Gemini prompt input field. Ensure SECURE_1PSID cookie is valid.');
+      throw new Error('Could not find Gemini prompt input field. Ensure SECURE_1PSID cookie is set in Render Environment Variables.');
     }
 
     await page.click(promptInput);
-    await page.fill(promptInput, `Generate a photorealistic commercial marketing banner: ${prompt}`);
+    await page.fill(promptInput, formattedPrompt);
     await page.waitForTimeout(500);
     await page.keyboard.press('Enter');
 
-    // Optional click fallback on send button
     try {
       const sendBtn = await page.$('button[aria-label*="Send"], button.send-button');
       if (sendBtn) await sendBtn.click();
@@ -109,13 +108,11 @@ app.post('/generate-image', async (req, res) => {
     console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output...');
 
     const imgSelector = 'img[src*="googleusercontent.com"]';
-
-    // Wait for output image
     await page.waitForSelector(imgSelector, { timeout: 70000 });
     await page.waitForTimeout(1500);
 
     const images = await page.$$eval(imgSelector, imgs => 
-      imgs.map(img => img.src).filter(src => src && src.includes('googleusercontent.com'))
+      imgs.map(img => img.src).filter(src => src && src.includes('googleusercontent.com') && !src.includes('s64-') && !src.includes('s32-'))
     );
 
     if (!images || images.length === 0) {
