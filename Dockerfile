@@ -1,12 +1,12 @@
-FROM mcr.microsoft.com/playwright:v1.45.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.63.0-jammy
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 3000
+EXPOSE 8000
 
-CMD ["node", "server.js"]
+CMD ["python", "main.py"]
