@@ -110,9 +110,8 @@ async def run_automation(raw_prompt: str):
                     if not name or not value:
                         continue
                     
-                    # Force google domains to .google.com so gemini.google.com can access them
-                    domain = c.get("domain", ".google.com")
-                    if "google" in domain:
+                    domain = c.get("domain", "").strip()
+                    if not domain:
                         domain = ".google.com"
 
                     cookie_obj = {
