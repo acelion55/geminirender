@@ -120,7 +120,7 @@ app.post('/generate-image', async (req, res) => {
     const inputSel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]';
     console.log('[Gemini Render] Waiting for prompt input box...');
     try {
-      await page.waitForSelector(inputSel, { timeout: 45000 });
+      await page.waitForSelector(inputSel, { timeout: 40000 });
     } catch (e) {
       const pageText = await page.content();
       const currentUrl = page.url();
@@ -133,46 +133,59 @@ app.post('/generate-image', async (req, res) => {
 
     await page.click(inputSel);
     await page.fill(inputSel, formattedPrompt);
-    await page.keyboard.press('Enter');
+    await page.waitForTimeout(1000);
 
-    console.log('[Gemini Render] Prompt submitted. Fast-polling for Imagen 3 output element...');
+    // Submit via explicit Send button click or Enter key
+    const sendBtnSel = 'button[aria-label*="Send message"], button[aria-label*="Send"], button.send-button, send-button';
+    const sendBtn = await page.$(sendBtnSel);
+    if (sendBtn && await sendBtn.isEnabled()) {
+      console.log('[Gemini Render] Clicking Send button...');
+      await sendBtn.click();
+    } else {
+      console.log('[Gemini Render] Pressing Enter key...');
+      await page.keyboard.press('Enter');
+    }
+
+    console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output element...');
 
     let targetElem = null;
     const startTime = Date.now();
 
-    while ((Date.now() - startTime) < 55000) {
-      const images = await page.$$('img');
+    while ((Date.now() - startTime) < 85000) {
+      const images = await page.$$('image-block img, sparkle-image img, img[src^="blob:"], img[src*="googleusercontent.com/gg/"], img[src*="googleusercontent.com"]');
       for (const img of images) {
         const src = (await img.getAttribute('src')) || '';
         const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
         if ((src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com')) && !isAvatar) {
           const box = await img.boundingBox();
-          if (box && box.width > 150) {
+          if (box && box.width > 200 && box.height > 200) {
             targetElem = img;
             break;
           }
         }
       }
       if (targetElem) break;
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(2000);
     }
 
     if (!targetElem) {
+      const bodyText = await page.innerText('body').catch(() => '');
+      console.log(`[Gemini Render Error Dump]: ${bodyText.slice(-300)}`);
       throw new Error('Gemini image generation timed out or no valid image element rendered.');
     }
 
-    console.log('[Gemini Render] Capturing direct PNG element screenshot buffer...');
+    console.log('[Gemini Render] Found generated image! Capturing direct PNG element screenshot buffer...');
     await targetElem.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(1000);
     const imgBuffer = await targetElem.screenshot({ type: 'png' });
 
     await browser.close();
     browser = null;
 
+    console.log('[Gemini Render] Uploading PNG buffer to Cloudinary...');
     let finalCDNUrl;
 
     if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
-      console.log('[Gemini Render] Uploading PNG buffer directly to Cloudinary...');
       const b64Data = `data:image/png;base64,${imgBuffer.toString('base64')}`;
       const uploadRes = await cloudinary.uploader.upload(b64Data, {
         folder: 'finonest_car_loans'
