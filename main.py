@@ -101,7 +101,7 @@ async def run_automation(raw_prompt: str):
         cookies_env = os.getenv("GOOGLE_COOKIES_JSON")
         if cookies_env:
             try:
-                cookies = json.loads(cookies_env)
+                cookies = json.loads(cookies_env.strip().strip("\ufeff"))
                 playwright_cookies = []
                 names_added = set()
 
