@@ -140,7 +140,7 @@ async def run_automation(raw_prompt: str):
 
         print("[Gemini Render] Navigating to Gemini...")
         await page.goto("https://gemini.google.com/app", wait_until="domcontentloaded", timeout=40000)
-        await asyncio.sleep(4)
+        await asyncio.sleep(2.0)
 
         input_sel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]'
         try:
@@ -155,7 +155,7 @@ async def run_automation(raw_prompt: str):
 
         await page.click(input_sel)
         await page.fill(input_sel, formatted_prompt)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.3)
 
         send_btn = await page.query_selector('button[aria-label*="Send message"], button[aria-label*="Send"]')
         if send_btn and await send_btn.is_enabled():
@@ -198,7 +198,7 @@ async def run_automation(raw_prompt: str):
                 print("✅ Found pure image and converted to DataURL via Canvas!")
                 break
 
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(1.0)
 
         if not base64_data:
             text_dump = await page.inner_text("body")
@@ -210,7 +210,8 @@ async def run_automation(raw_prompt: str):
 
         print("[Gemini Render] Uploading pure base64 to Cloudinary...")
         if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
-            upload_res = cloudinary.uploader.upload(
+            upload_res = await asyncio.to_thread(
+                cloudinary.uploader.upload,
                 base64_data,
                 folder="finonest_car_loans"
             )
@@ -230,9 +231,9 @@ async def run_automation(raw_prompt: str):
 @app.post("/generate-image")
 async def generate_image(req: ImageRequest):
     try:
-        return await asyncio.wait_for(run_automation(req.prompt), timeout=100.0)
+        return await asyncio.wait_for(run_automation(req.prompt), timeout=120.0)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Operation timed out after 100 seconds.")
+        raise HTTPException(status_code=504, detail="Operation timed out after 120 seconds.")
 
 if __name__ == "__main__":
     import uvicorn
