@@ -192,19 +192,44 @@ async function runAutomation(rawPrompt) {
       throw err;
     }
 
-    console.log('[Gemini Render] Found generated image! Capturing direct PNG element screenshot buffer...');
-    await targetElem.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(1000);
-    const imgBuffer = await targetElem.screenshot({ type: 'png' });
+    console.log('[Gemini Render] Found generated image element! Extracting clean high-res image data...');
+    const blobUrl = await targetElem.getAttribute('src');
+    let b64Data = null;
+
+    if (blobUrl && blobUrl.startsWith('blob:')) {
+      console.log(`[Gemini Render] Converting blob URL to base64 via page.evaluate...`);
+      try {
+        b64Data = await page.evaluate(async (url) => {
+          const response = await fetch(url);
+          const blob = await response.blob();
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }, blobUrl);
+        console.log('[Gemini Render] Blob converted to base64 successfully!');
+      } catch (evalErr) {
+        console.warn('[Gemini Render] Blob evaluate failed, falling back to element screenshot:', evalErr.message);
+      }
+    }
+
+    if (!b64Data) {
+      console.log('[Gemini Render] Falling back to element screenshot...');
+      await targetElem.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      const imgBuffer = await targetElem.screenshot({ type: 'png' });
+      b64Data = `data:image/png;base64,${imgBuffer.toString('base64')}`;
+    }
 
     await browser.close();
     browser = null;
 
-    console.log('[Gemini Render] Uploading PNG buffer to Cloudinary...');
+    console.log('[Gemini Render] Uploading clean high-res image to Cloudinary...');
     let finalCDNUrl;
 
     if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
-      const b64Data = `data:image/png;base64,${imgBuffer.toString('base64')}`;
       const uploadRes = await cloudinary.uploader.upload(b64Data, {
         folder: 'finonest_car_loans'
       });
@@ -212,7 +237,7 @@ async function runAutomation(rawPrompt) {
       console.log('[Gemini Render] Cloudinary upload successful:', finalCDNUrl);
     } else {
       console.warn('[Gemini Render] Cloudinary keys not found. Falling back to data URI.');
-      finalCDNUrl = `data:image/png;base64,${imgBuffer.toString('base64')}`;
+      finalCDNUrl = b64Data;
     }
 
     return {
