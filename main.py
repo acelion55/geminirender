@@ -102,14 +102,17 @@ async def run_automation(raw_prompt: str):
             try:
                 cookies = json.loads(COOKIES_JSON)
                 playwright_cookies = []
+                names_added = set()
+
                 for c in cookies:
                     name = c.get("name")
                     value = c.get("value")
                     if not name or not value:
                         continue
                     
+                    # Force google domains to .google.com so gemini.google.com can access them
                     domain = c.get("domain", ".google.com")
-                    if "google.com" not in domain:
+                    if "google" in domain:
                         domain = ".google.com"
 
                     cookie_obj = {
@@ -117,19 +120,57 @@ async def run_automation(raw_prompt: str):
                         "value": value,
                         "domain": domain,
                         "path": c.get("path", "/"),
-                        "secure": True,
-                        "sameSite": "None"
+                        "secure": True if (name.startswith("__Secure-") or name.startswith("__Host-")) else c.get("secure", False),
+                        "sameSite": "None" if name.startswith("__Secure-") else c.get("sameSite", "Lax")
                     }
                     if "httpOnly" in c:
                         cookie_obj["httpOnly"] = bool(c["httpOnly"])
                     
                     playwright_cookies.append(cookie_obj)
+                    names_added.add(name)
+
+                # Fallbacks for missing legacy auth cookies
+                if "SID" not in names_added and "__Secure-1PSID" in names_added:
+                    psid_val = next(c["value"] for c in playwright_cookies if c["name"] == "__Secure-1PSID")
+                    playwright_cookies.append({
+                        "name": "SID",
+                        "value": psid_val,
+                        "domain": ".google.com",
+                        "path": "/",
+                        "secure": False,
+                        "httpOnly": False,
+                        "sameSite": "Lax"
+                    })
+                    names_added.add("SID")
+
+                if "SAPISID" not in names_added and "__Secure-3PAPISID" in names_added:
+                    papisid_val = next(c["value"] for c in playwright_cookies if c["name"] == "__Secure-3PAPISID")
+                    playwright_cookies.append({
+                        "name": "SAPISID",
+                        "value": papisid_val,
+                        "domain": ".google.com",
+                        "path": "/",
+                        "secure": True,
+                        "httpOnly": False,
+                        "sameSite": "None"
+                    })
+                    names_added.add("SAPISID")
+
+                if "SSID" not in names_added and "__Secure-1PSID" in names_added:
+                    psid_val = next(c["value"] for c in playwright_cookies if c["name"] == "__Secure-1PSID")
+                    playwright_cookies.append({
+                        "name": "SSID",
+                        "value": psid_val,
+                        "domain": ".google.com",
+                        "path": "/",
+                        "secure": True,
+                        "httpOnly": True,
+                        "sameSite": "None"
+                    })
+                    names_added.add("SSID")
 
                 await context.add_cookies(playwright_cookies)
-                names = [c["name"] for c in playwright_cookies]
-                has_1psid = "__Secure-1PSID" in names
-                has_1psidts = "__Secure-1PSIDTS" in names
-                print(f"[Gemini Render] {len(playwright_cookies)} cookies mounted. (__Secure-1PSID: {has_1psid}, __Secure-1PSIDTS: {has_1psidts})")
+                print(f"[Gemini Render] {len(playwright_cookies)} cookies mounted. Key auth present: SID={'SID' in names_added}, HSID={'HSID' in names_added}, APISID={'APISID' in names_added}, 1PSID={'__Secure-1PSID' in names_added}, 1PSIDTS={'__Secure-1PSIDTS' in names_added}")
             except Exception as e:
                 print(f"[Cookie Error]: {e}")
         elif SECURE_1PSID:
@@ -152,7 +193,7 @@ async def run_automation(raw_prompt: str):
             curr_url = page.url
             if "Sign in" in content or "accounts.google.com" in curr_url or "Sign In" in content:
                 print("[Gemini Render] Session expired / Bot detected. Google redirect to login.")
-                raise HTTPException(status_code=401, detail="Google session expired. Fresh GOOGLE_COOKIES_JSON export required.")
+                raise HTTPException(status_code=401, detail="Google session expired or invalid. Full GOOGLE_COOKIES_JSON export required.")
             raise HTTPException(status_code=504, detail=f"Timeout waiting for prompt box. (URL: {curr_url})")
 
         await page.click(input_sel)
