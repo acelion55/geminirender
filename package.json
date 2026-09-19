@@ -1,12 +1,13 @@
 {
   "name": "gemini-render-service",
-  "version": "1.0.0",
-  "description": "Render Docker Service for Gemini Image Generation in n8n",
+  "version": "1.1.0",
+  "description": "Render Docker Service for Gemini Image Generation in n8n with Cloudinary upload and Keep-Awake Ping",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "cloudinary": "^2.5.1",
     "express": "^4.19.2",
     "playwright": "^1.63.0"
   }

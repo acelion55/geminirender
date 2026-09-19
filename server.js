@@ -1,19 +1,46 @@
 const express = require('express');
 const { chromium } = require('playwright');
+const cloudinary = require('cloudinary').v2;
+const http = require('http');
+const https = require('https');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
-// Read cookies from Render environment variables
+// Configure Cloudinary from Environment Variables
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
+  api_key: process.env.CLOUDINARY_API_KEY || '',
+  api_secret: process.env.CLOUDINARY_API_SECRET || '',
+  secure: true
+});
+
+// Read Google cookies from Render Environment Variables
 const SECURE_1PSID = process.env.SECURE_1PSID || '';
 const SECURE_1PSIDTS = process.env.SECURE_1PSIDTS || '';
 
+// 1. Health check API endpoint
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
+// 2. Keep-Awake Cron (Pings /health every 10 minutes so Render never sleeps)
+setInterval(() => {
+  const healthUrl = `${RENDER_EXTERNAL_URL}/health`;
+  console.log(`[Keep-Awake] Pinging self health check: ${healthUrl}`);
+  
+  const client = healthUrl.startsWith('https') ? https : http;
+  client.get(healthUrl, (res) => {
+    console.log(`[Keep-Awake] Heartbeat status: ${res.statusCode}`);
+  }).on('error', (err) => {
+    console.log(`[Keep-Awake] Self-ping note: ${err.message}`);
+  });
+}, 10 * 60 * 1000); // Every 10 minutes
+
+// 3. Generate Image & Upload to Cloudinary API
 app.post('/generate-image', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt || typeof prompt !== 'string') {
@@ -119,11 +146,35 @@ app.post('/generate-image', async (req, res) => {
       throw new Error('No generated image URL found.');
     }
 
-    const latestImage = images[images.length - 1];
-    console.log('[Gemini Render] Successfully extracted image:', latestImage);
+    const geminiRawUrl = images[images.length - 1];
+    console.log('[Gemini Render] Extracted Gemini Image URL:', geminiRawUrl);
+
+    let finalCDNUrl = geminiRawUrl;
+
+    // Check if Cloudinary credentials are provided
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      try {
+        console.log('[Gemini Render] Uploading generated image to Cloudinary...');
+        const uploadRes = await cloudinary.uploader.upload(geminiRawUrl, {
+          folder: 'finonest_car_loans',
+          resource_type: 'image'
+        });
+        finalCDNUrl = uploadRes.secure_url;
+        console.log('[Gemini Render] Uploaded to Cloudinary successfully:', finalCDNUrl);
+      } catch (cloudErr) {
+        console.error('[Gemini Render] Cloudinary upload error, fallback to raw URL:', cloudErr.message);
+      }
+    } else {
+      console.log('[Gemini Render] Cloudinary env variables not set. Returning raw Google CDN link.');
+    }
 
     await browser.close();
-    return res.json({ success: true, imageUrl: latestImage, allImages: images });
+    return res.json({ 
+      success: true, 
+      image_url: finalCDNUrl,
+      raw_google_url: geminiRawUrl,
+      aspect_ratio: "1:1"
+    });
 
   } catch (err) {
     console.error('[Gemini Render] Error:', err.message);
