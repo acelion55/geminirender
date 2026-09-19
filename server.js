@@ -113,13 +113,14 @@ app.post('/generate-image', async (req, res) => {
       console.warn('[Gemini Render] Warning: No Google cookies configured!');
     }
 
-    console.log('[Gemini Render] Navigating to Gemini with domcontentloaded...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 45000 });
+    console.log('[Gemini Render] Navigating to Gemini with fast commit strategy...');
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 60000 });
 
     // Selector for Gemini prompt input box
-    const inputSel = 'rich-textarea p, div[contenteditable="true"]';
+    const inputSel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]';
+    console.log('[Gemini Render] Waiting for prompt input box...');
     try {
-      await page.waitForSelector(inputSel, { timeout: 30000 });
+      await page.waitForSelector(inputSel, { timeout: 60000 });
     } catch (e) {
       const pageText = await page.content();
       const currentUrl = page.url();
