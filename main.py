@@ -74,7 +74,11 @@ async def apply_stealth(page):
 
 async def run_automation(raw_prompt: str):
     clean_prompt = raw_prompt.lstrip("=").strip()
-    formatted_prompt = clean_prompt
+    lower_p = clean_prompt.lower()
+    if not (lower_p.startswith("create") or lower_p.startswith("generate") or lower_p.startswith("draw") or lower_p.startswith("make")):
+        formatted_prompt = f"Create an image of: {clean_prompt}"
+    else:
+        formatted_prompt = clean_prompt
     print(f"🚀 Sent Prompt: {formatted_prompt}")
 
     async with async_playwright() as p:
