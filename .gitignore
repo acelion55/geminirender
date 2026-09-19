@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+cookies.json
+test_chat_mode.py
+test_runner.py
+test_output.txt

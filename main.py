@@ -5,15 +5,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
 
-# Robust import for playwright_stealth across versions
+# Robust import for playwright_stealth
 try:
-    from playwright_stealth import stealth_async
+    from playwright_stealth import Stealth
 except ImportError:
-    try:
-        from playwright_stealth import stealth_sync as stealth_async
-    except ImportError:
-        import playwright_stealth
-        stealth_async = getattr(playwright_stealth, "stealth_async", getattr(playwright_stealth, "stealth", None))
+    Stealth = None
 
 import cloudinary
 import cloudinary.uploader
@@ -69,17 +65,16 @@ async def startup_event():
     asyncio.create_task(keep_awake())
 
 async def apply_stealth(page):
-    if stealth_async:
+    if Stealth:
         try:
-            res = stealth_async(page)
-            if asyncio.iscoroutine(res):
-                await res
+            await Stealth().apply_stealth_async(page)
+            print("[Gemini Render] Stealth evasion applied successfully!")
         except Exception as e:
             print(f"[Stealth Warning]: {e}")
 
 async def run_automation(raw_prompt: str):
     clean_prompt = raw_prompt.lstrip("=").strip()
-    formatted_prompt = f"Draw: {clean_prompt}"
+    formatted_prompt = clean_prompt
     print(f"🚀 Sent Prompt: {formatted_prompt}")
 
     async with async_playwright() as p:
@@ -90,17 +85,19 @@ async def run_automation(raw_prompt: str):
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
-                "--single-process"
+                "--disable-blink-features=AutomationControlled"
             ]
         )
         context = await browser.new_context(
-            viewport={"width": 1024, "height": 768},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
 
-        if COOKIES_JSON:
+
+        cookies_env = os.getenv("GOOGLE_COOKIES_JSON")
+        if cookies_env:
             try:
-                cookies = json.loads(COOKIES_JSON)
+                cookies = json.loads(cookies_env)
                 playwright_cookies = []
                 names_added = set()
 
@@ -109,8 +106,8 @@ async def run_automation(raw_prompt: str):
                     value = c.get("value")
                     if not name or not value:
                         continue
-                    
-                    domain = c.get("domain", "").strip()
+
+                    domain = c.get("domain", ".google.com").strip()
                     if not domain:
                         domain = ".google.com"
 
@@ -119,54 +116,14 @@ async def run_automation(raw_prompt: str):
                         "value": value,
                         "domain": domain,
                         "path": c.get("path", "/"),
-                        "secure": True if (name.startswith("__Secure-") or name.startswith("__Host-")) else c.get("secure", False),
-                        "sameSite": "None" if name.startswith("__Secure-") else c.get("sameSite", "Lax")
                     }
+                    if "secure" in c:
+                        cookie_obj["secure"] = bool(c["secure"])
                     if "httpOnly" in c:
                         cookie_obj["httpOnly"] = bool(c["httpOnly"])
-                    
+
                     playwright_cookies.append(cookie_obj)
                     names_added.add(name)
-
-                # Fallbacks for missing legacy auth cookies
-                if "SID" not in names_added and "__Secure-1PSID" in names_added:
-                    psid_val = next(c["value"] for c in playwright_cookies if c["name"] == "__Secure-1PSID")
-                    playwright_cookies.append({
-                        "name": "SID",
-                        "value": psid_val,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "secure": False,
-                        "httpOnly": False,
-                        "sameSite": "Lax"
-                    })
-                    names_added.add("SID")
-
-                if "SAPISID" not in names_added and "__Secure-3PAPISID" in names_added:
-                    papisid_val = next(c["value"] for c in playwright_cookies if c["name"] == "__Secure-3PAPISID")
-                    playwright_cookies.append({
-                        "name": "SAPISID",
-                        "value": papisid_val,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "secure": True,
-                        "httpOnly": False,
-                        "sameSite": "None"
-                    })
-                    names_added.add("SAPISID")
-
-                if "SSID" not in names_added and "__Secure-1PSID" in names_added:
-                    psid_val = next(c["value"] for c in playwright_cookies if c["name"] == "__Secure-1PSID")
-                    playwright_cookies.append({
-                        "name": "SSID",
-                        "value": psid_val,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "secure": True,
-                        "httpOnly": True,
-                        "sameSite": "None"
-                    })
-                    names_added.add("SSID")
 
                 await context.add_cookies(playwright_cookies)
                 print(f"[Gemini Render] {len(playwright_cookies)} cookies mounted. Key auth present: SID={'SID' in names_added}, HSID={'HSID' in names_added}, APISID={'APISID' in names_added}, 1PSID={'__Secure-1PSID' in names_added}, 1PSIDTS={'__Secure-1PSIDTS' in names_added}")
@@ -182,7 +139,8 @@ async def run_automation(raw_prompt: str):
         await apply_stealth(page)
 
         print("[Gemini Render] Navigating to Gemini...")
-        await page.goto("https://gemini.google.com/app", wait_until="commit", timeout=40000)
+        await page.goto("https://gemini.google.com/app", wait_until="domcontentloaded", timeout=40000)
+        await asyncio.sleep(4)
 
         input_sel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]'
         try:
@@ -197,7 +155,7 @@ async def run_automation(raw_prompt: str):
 
         await page.click(input_sel)
         await page.fill(input_sel, formatted_prompt)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
 
         send_btn = await page.query_selector('button[aria-label*="Send message"], button[aria-label*="Send"]')
         if send_btn and await send_btn.is_enabled():
