@@ -114,13 +114,13 @@ app.post('/generate-image', async (req, res) => {
     }
 
     console.log('[Gemini Render] Navigating to Gemini with fast commit strategy...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 60000 });
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 45000 });
 
     // Selector for Gemini prompt input box
     const inputSel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]';
     console.log('[Gemini Render] Waiting for prompt input box...');
     try {
-      await page.waitForSelector(inputSel, { timeout: 60000 });
+      await page.waitForSelector(inputSel, { timeout: 45000 });
     } catch (e) {
       const pageText = await page.content();
       const currentUrl = page.url();
@@ -135,26 +135,26 @@ app.post('/generate-image', async (req, res) => {
     await page.fill(inputSel, formattedPrompt);
     await page.keyboard.press('Enter');
 
-    console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output element...');
+    console.log('[Gemini Render] Prompt submitted. Fast-polling for Imagen 3 output element...');
 
     let targetElem = null;
     const startTime = Date.now();
 
-    while ((Date.now() - startTime) < 90000) {
+    while ((Date.now() - startTime) < 55000) {
       const images = await page.$$('img');
       for (const img of images) {
         const src = (await img.getAttribute('src')) || '';
         const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
         if ((src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com')) && !isAvatar) {
           const box = await img.boundingBox();
-          if (box && box.width > 200) {
+          if (box && box.width > 150) {
             targetElem = img;
             break;
           }
         }
       }
       if (targetElem) break;
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
     }
 
     if (!targetElem) {
@@ -163,7 +163,7 @@ app.post('/generate-image', async (req, res) => {
 
     console.log('[Gemini Render] Capturing direct PNG element screenshot buffer...');
     await targetElem.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(300);
     const imgBuffer = await targetElem.screenshot({ type: 'png' });
 
     await browser.close();
