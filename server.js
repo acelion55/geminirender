@@ -128,11 +128,35 @@ app.post('/generate-image', async (req, res) => {
 
     const page = await context.newPage();
     console.log('[Gemini Render] Navigating to Gemini...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+
+    // Dismiss potential onboarding popups or "Got it" dialogs
+    const popupSelectors = [
+      'button:has-text("Got it")',
+      'button:has-text("I agree")',
+      'button:has-text("Continue")',
+      'button:has-text("Dismiss")',
+      '[aria-label*="Close"]'
+    ];
+    for (const popSel of popupSelectors) {
+      try {
+        const btn = await page.$(popSel);
+        if (btn) {
+          await btn.click();
+          console.log(`[Gemini Render] Clicked onboarding popup: ${popSel}`);
+          await page.waitForTimeout(1000);
+        }
+      } catch (_) {}
+    }
 
     const promptSelectors = [
+      'div[role="textbox"]',
       'div[contenteditable="true"]',
       'rich-textarea div[contenteditable="true"]',
+      'rich-textarea',
+      '[aria-label*="Enter a prompt"]',
+      '[aria-label*="Ask Gemini"]',
       'textarea',
       'p[data-placeholder]'
     ];
@@ -140,8 +164,9 @@ app.post('/generate-image', async (req, res) => {
     let promptInput = null;
     for (const selector of promptSelectors) {
       try {
-        await page.waitForSelector(selector, { timeout: 10000 });
+        await page.waitForSelector(selector, { timeout: 8000 });
         promptInput = selector;
+        console.log(`[Gemini Render] Found prompt input selector: "${selector}"`);
         break;
       } catch (e) {}
     }
