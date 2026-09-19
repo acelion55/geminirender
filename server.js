@@ -105,21 +105,21 @@ app.post('/generate-image', async (req, res) => {
       console.warn('[Gemini Render] Warning: No Google cookies configured!');
     }
 
-    console.log('[Gemini Render] Navigating to Gemini...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'networkidle', timeout: 60000 });
+    console.log('[Gemini Render] Navigating to Gemini with domcontentloaded...');
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 45000 });
 
     // Selector for Gemini prompt input box
-    const inputSel = 'div[contenteditable="true"]';
+    const inputSel = 'rich-textarea p, div[contenteditable="true"]';
     try {
-      await page.waitForSelector(inputSel, { timeout: 25000 });
+      await page.waitForSelector(inputSel, { timeout: 30000 });
     } catch (e) {
       const pageText = await page.content();
       const currentUrl = page.url();
       if (pageText.includes('Sign in') || currentUrl.includes('accounts.google.com')) {
-        console.error('[Gemini Render] Google detected bot on datacenter IP or cookies expired.');
-        throw new Error('Google detected bot on datacenter IP or cookies expired.');
+        console.error('[Gemini Render] Google session verification required / Bot detected.');
+        throw new Error('Google session verification required.');
       }
-      throw new Error(`Gemini UI failed to load chatbox. (Current URL: ${currentUrl})`);
+      throw new Error(`Timeout waiting for Gemini prompt box. (Current URL: ${currentUrl})`);
     }
 
     await page.click(inputSel);
@@ -182,7 +182,7 @@ app.post('/generate-image', async (req, res) => {
     if (browser) {
       try { await browser.close(); } catch (_) {}
     }
-    const statusCode = err.message.includes('detected bot') ? 401 : 500;
+    const statusCode = err.message.includes('session verification') ? 401 : 500;
     return res.status(statusCode).json({ success: false, status: 'error', detail: err.message, error: err.message });
   }
 });
