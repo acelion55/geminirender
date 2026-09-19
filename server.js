@@ -50,8 +50,8 @@ setInterval(() => {
 // Helper function to execute Playwright automation
 async function runAutomation(rawPrompt) {
   const cleanPrompt = rawPrompt.replace(/^=+/, '').trim();
-  const formattedPrompt = `Generate an image in 1:1 square aspect ratio: ${cleanPrompt}`;
-  console.log(`🚀 Processing 1:1 prompt: "${formattedPrompt}"`);
+  const formattedPrompt = `Generate an image: ${cleanPrompt}. Pure visual 1:1 square aspect ratio image only, no text response.`;
+  console.log(`🚀 Prompt: "${formattedPrompt}"`);
 
   let browser;
   try {
@@ -147,8 +147,15 @@ async function runAutomation(rawPrompt) {
 
     let targetElem = null;
     const startTime = Date.now();
+    let generationStarted = false;
 
-    while ((Date.now() - startTime) < 45000) {
+    while ((Date.now() - startTime) < 50000) {
+      // Check if stop response button is present (generation in progress)
+      const stopBtn = await page.$('button[aria-label*="Stop response"], button[aria-label*="Stop generation"], button.stop-button');
+      if (stopBtn) {
+        generationStarted = true;
+      }
+
       const images = await page.$$('image-block img, sparkle-image img, img[src^="blob:"], img[src*="googleusercontent.com/gg/"], img[src*="googleusercontent.com"]');
       for (const img of images) {
         const src = (await img.getAttribute('src')) || '';
@@ -161,8 +168,16 @@ async function runAutomation(rawPrompt) {
           }
         }
       }
+
       if (targetElem) break;
-      await page.waitForTimeout(2000);
+
+      // Smart early exit: if generation started and completed (stop button disappeared) without an image
+      if (generationStarted && !stopBtn) {
+        console.log('[Gemini Render] Response completed without an image element.');
+        break;
+      }
+
+      await page.waitForTimeout(1500);
     }
 
     if (!targetElem) {
