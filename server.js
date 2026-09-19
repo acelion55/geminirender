@@ -47,21 +47,14 @@ setInterval(() => {
   });
 }, 10 * 60 * 1000); // Every 10 minutes
 
-// 3. Generate Image & Upload to Cloudinary API
-app.post('/generate-image', async (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ success: false, error: 'Prompt string is required' });
-  }
-
-  // Strip any leading '=' accidentally passed from n8n expression
-  const cleanPrompt = prompt.replace(/^=/, '').trim();
-  const formattedPrompt = `Create an image in 1:1 square aspect ratio of: ${cleanPrompt}`;
+// Helper function to execute Playwright automation
+async function runAutomation(rawPrompt) {
+  const cleanPrompt = rawPrompt.replace(/^=+/, '').trim();
+  const formattedPrompt = `Generate an image in 1:1 square aspect ratio: ${cleanPrompt}`;
+  console.log(`🚀 Processing 1:1 prompt: "${formattedPrompt}"`);
 
   let browser;
   try {
-    console.log(`🚀 Processing 1:1 prompt: "${formattedPrompt}"`);
-
     browser = await chromium.launch({
       headless: true,
       args: [
@@ -114,28 +107,32 @@ app.post('/generate-image', async (req, res) => {
     }
 
     console.log('[Gemini Render] Navigating to Gemini with fast commit strategy...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 45000 });
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 35000 });
 
     // Selector for Gemini prompt input box
     const inputSel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]';
     console.log('[Gemini Render] Waiting for prompt input box...');
     try {
-      await page.waitForSelector(inputSel, { timeout: 40000 });
+      await page.waitForSelector(inputSel, { timeout: 30000 });
     } catch (e) {
       const pageText = await page.content();
       const currentUrl = page.url();
       if (pageText.includes('Sign in') || currentUrl.includes('accounts.google.com')) {
         console.error('[Gemini Render] Google session verification required / Bot detected.');
-        throw new Error('Google session verification required.');
+        const err = new Error('Google session verification required.');
+        err.statusCode = 401;
+        throw err;
       }
-      throw new Error(`Timeout waiting for Gemini prompt box. (Current URL: ${currentUrl})`);
+      const err = new Error(`Timeout waiting for Gemini prompt box. (Current URL: ${currentUrl})`);
+      err.statusCode = 504;
+      throw err;
     }
 
     await page.click(inputSel);
     await page.fill(inputSel, formattedPrompt);
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
 
-    // Submit via explicit Send button click or Enter key
+    // Trigger send via explicit Send button click or Enter key
     const sendBtnSel = 'button[aria-label*="Send message"], button[aria-label*="Send"], button.send-button, send-button';
     const sendBtn = await page.$(sendBtnSel);
     if (sendBtn && await sendBtn.isEnabled()) {
@@ -146,19 +143,19 @@ app.post('/generate-image', async (req, res) => {
       await page.keyboard.press('Enter');
     }
 
-    console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output element...');
+    console.log('[Gemini Render] Prompt submitted. Polling for Imagen image...');
 
     let targetElem = null;
     const startTime = Date.now();
 
-    while ((Date.now() - startTime) < 85000) {
+    while ((Date.now() - startTime) < 45000) {
       const images = await page.$$('image-block img, sparkle-image img, img[src^="blob:"], img[src*="googleusercontent.com/gg/"], img[src*="googleusercontent.com"]');
       for (const img of images) {
         const src = (await img.getAttribute('src')) || '';
         const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
         if ((src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com')) && !isAvatar) {
           const box = await img.boundingBox();
-          if (box && box.width > 200 && box.height > 200) {
+          if (box && box.width > 200) {
             targetElem = img;
             break;
           }
@@ -170,8 +167,12 @@ app.post('/generate-image', async (req, res) => {
 
     if (!targetElem) {
       const bodyText = await page.innerText('body').catch(() => '');
-      console.log(`[Gemini Render Error Dump]: ${bodyText.slice(-300)}`);
-      throw new Error('Gemini image generation timed out or no valid image element rendered.');
+      console.log(`[Gemini Response Preview]: ${bodyText.slice(-250)}`);
+      await browser.close();
+      browser = null;
+      const err = new Error('Gemini responded with text instead of generating an image.');
+      err.statusCode = 422;
+      throw err;
     }
 
     console.log('[Gemini Render] Found generated image! Capturing direct PNG element screenshot buffer...');
@@ -197,20 +198,48 @@ app.post('/generate-image', async (req, res) => {
       finalCDNUrl = `data:image/png;base64,${imgBuffer.toString('base64')}`;
     }
 
-    return res.json({ 
+    return {
       status: 'success',
-      success: true, 
+      success: true,
       aspect_ratio: '1:1',
       image_url: finalCDNUrl
-    });
+    };
 
-  } catch (err) {
-    console.error('[Gemini Render] Error:', err.message);
+  } finally {
     if (browser) {
       try { await browser.close(); } catch (_) {}
     }
-    const statusCode = err.message.includes('session verification') ? 401 : 500;
-    return res.status(statusCode).json({ success: false, status: 'error', detail: err.message, error: err.message });
+  }
+}
+
+// 3. Generate Image Route with Strict 80-Second Hard Timeout
+app.post('/generate-image', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ success: false, error: 'Prompt string is required' });
+  }
+
+  // 80-second hard timeout wrapper to prevent 5-minute ECONNABORTED in n8n
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => {
+      const err = new Error('Operation timed out after 80 seconds.');
+      err.statusCode = 504;
+      reject(err);
+    }, 80000);
+  });
+
+  try {
+    const result = await Promise.race([runAutomation(prompt), timeoutPromise]);
+    return res.json(result);
+  } catch (err) {
+    console.error('[Gemini Render Error]:', err.message);
+    const statusCode = err.statusCode || 500;
+    return res.status(statusCode).json({
+      success: false,
+      status: 'error',
+      detail: err.message,
+      error: err.message
+    });
   }
 });
 
