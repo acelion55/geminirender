@@ -11,12 +11,18 @@ const PORT = process.env.PORT || 8000;
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
 // Configure Cloudinary from Environment Variables
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
-  api_key: process.env.CLOUDINARY_API_KEY || '',
-  api_secret: process.env.CLOUDINARY_API_SECRET || '',
-  secure: true
-});
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
+
+if (CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET,
+    secure: true
+  });
+}
 
 // Read Google cookies from Render Environment Variables
 const GOOGLE_COOKIES_JSON = process.env.GOOGLE_COOKIES_JSON || '';
@@ -48,8 +54,9 @@ app.post('/generate-image', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Prompt string is required' });
   }
 
-  // Force 1:1 square aspect ratio
-  const formattedPrompt = `Create an image in 1:1 square aspect ratio of: ${prompt}`;
+  // Strip any leading '=' accidentally passed from n8n expression
+  const cleanPrompt = prompt.replace(/^=/, '').trim();
+  const formattedPrompt = `Create an image in 1:1 square aspect ratio of: ${cleanPrompt}`;
 
   let browser;
   try {
@@ -61,12 +68,13 @@ app.post('/generate-image', async (req, res) => {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
         '--disable-blink-features=AutomationControlled'
       ]
     });
 
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      viewport: { width: 1024, height: 768 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     });
 
@@ -126,75 +134,53 @@ app.post('/generate-image', async (req, res) => {
     await page.fill(inputSel, formattedPrompt);
     await page.keyboard.press('Enter');
 
-    console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output...');
+    console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output element...');
 
+    let targetElem = null;
     const startTime = Date.now();
-    let geminiRawUrl = null;
 
-    while ((Date.now() - startTime) < 75000) {
-      const elements = await page.$$('img');
-      for (const elem of elements) {
-        const src = await elem.getAttribute('src');
-        if (src) {
-          const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-', 's192-', 's256-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
-          const isGeneratedImg = (src.startsWith('blob:') || src.includes('/gg/') || src.includes('generativeai') || src.includes('googleusercontent.com')) && !isAvatar;
-          
-          if (isGeneratedImg) {
-            geminiRawUrl = src;
-            console.log('[Gemini Render] Found matching generated image URL:', src);
+    while ((Date.now() - startTime) < 90000) {
+      const images = await page.$$('img');
+      for (const img of images) {
+        const src = (await img.getAttribute('src')) || '';
+        const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
+        if ((src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com')) && !isAvatar) {
+          const box = await img.boundingBox();
+          if (box && box.width > 200) {
+            targetElem = img;
             break;
           }
         }
       }
-      if (geminiRawUrl) break;
-      await page.waitForTimeout(2500);
+      if (targetElem) break;
+      await page.waitForTimeout(2000);
     }
 
-    if (!geminiRawUrl) {
-      throw new Error('Gemini image generation timed out or no generated image found.');
+    if (!targetElem) {
+      throw new Error('Gemini image generation timed out or no valid image element rendered.');
     }
 
-    console.log('[Gemini Render] Extracted Generated Gemini Image URL:', geminiRawUrl);
-
-    // Convert blob: or remote image to Base64 in browser context for Cloudinary upload
-    let base64Data = geminiRawUrl;
-    try {
-      console.log('[Gemini Render] Converting blob/image to Base64 data-URI in browser...');
-      base64Data = await page.evaluate(async (url) => {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        });
-      }, geminiRawUrl);
-    } catch (bErr) {
-      console.warn('[Gemini Render] Base64 conversion warning:', bErr.message);
-    }
+    console.log('[Gemini Render] Capturing direct PNG element screenshot buffer...');
+    await targetElem.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1000);
+    const imgBuffer = await targetElem.screenshot({ type: 'png' });
 
     await browser.close();
     browser = null;
 
-    let finalCDNUrl = geminiRawUrl;
+    let finalCDNUrl;
 
-    // Upload Base64 data to Cloudinary if credentials present
-    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-      try {
-        console.log('[Gemini Render] Uploading Base64 image payload to Cloudinary...');
-        const uploadRes = await cloudinary.uploader.upload(base64Data, {
-          folder: 'finonest_car_loans',
-          resource_type: 'image'
-        });
-        finalCDNUrl = uploadRes.secure_url;
-        console.log('[Gemini Render] Uploaded to Cloudinary successfully:', finalCDNUrl);
-      } catch (cloudErr) {
-        console.error('[Gemini Render] Cloudinary upload error:', cloudErr.message);
-        throw new Error(`Cloudinary Upload Failed: ${cloudErr.message}`);
-      }
+    if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
+      console.log('[Gemini Render] Uploading PNG buffer directly to Cloudinary...');
+      const b64Data = `data:image/png;base64,${imgBuffer.toString('base64')}`;
+      const uploadRes = await cloudinary.uploader.upload(b64Data, {
+        folder: 'finonest_car_loans'
+      });
+      finalCDNUrl = uploadRes.secure_url;
+      console.log('[Gemini Render] Cloudinary upload successful:', finalCDNUrl);
     } else {
-      console.warn('[Gemini Render] WARNING: Cloudinary environment variables are missing! Returning blob URL.');
-      throw new Error('Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) missing on Render.');
+      console.warn('[Gemini Render] Cloudinary keys not found. Falling back to data URI.');
+      finalCDNUrl = `data:image/png;base64,${imgBuffer.toString('base64')}`;
     }
 
     return res.json({ 
