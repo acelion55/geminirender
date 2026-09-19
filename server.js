@@ -65,7 +65,8 @@ app.post('/generate-image', async (req, res) => {
     });
 
     const context = await browser.newContext({
-      viewport: { width: 1024, height: 1024 }
+      viewport: { width: 1280, height: 800 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
     });
 
     // Inject Google Gemini session cookies
@@ -74,6 +75,15 @@ app.post('/generate-image', async (req, res) => {
         {
           name: '__Secure-1PSID',
           value: SECURE_1PSID,
+          domain: '.google.com',
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          sameSite: 'None'
+        },
+        {
+          name: '__Secure-3PSID',
+          value: process.env.SECURE_3PSID || SECURE_1PSID,
           domain: '.google.com',
           path: '/',
           secure: true,
@@ -92,26 +102,9 @@ app.post('/generate-image', async (req, res) => {
           httpOnly: true,
           sameSite: 'None'
         });
-      }
-
-      const SECURE_3PSID = process.env.SECURE_3PSID || '';
-      if (SECURE_3PSID) {
-        cookies.push({
-          name: '__Secure-3PSID',
-          value: SECURE_3PSID,
-          domain: '.google.com',
-          path: '/',
-          secure: true,
-          httpOnly: true,
-          sameSite: 'None'
-        });
-      }
-
-      const SECURE_3PSIDTS = process.env.SECURE_3PSIDTS || '';
-      if (SECURE_3PSIDTS) {
         cookies.push({
           name: '__Secure-3PSIDTS',
-          value: SECURE_3PSIDTS,
+          value: process.env.SECURE_3PSIDTS || SECURE_1PSIDTS,
           domain: '.google.com',
           path: '/',
           secure: true,
