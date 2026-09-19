@@ -49,13 +49,11 @@ setInterval(() => {
 
 // Helper function to execute Playwright automation
 async function runAutomation(rawPrompt) {
-  let cleanPrompt = rawPrompt.replace(/^=+/, '').trim();
-  // Strip keywords that confuse Gemini into text-only mode
-  cleanPrompt = cleanPrompt.replace(/banner/gi, 'photo').replace(/advertisement/gi, 'visual scene');
+  const cleanPrompt = rawPrompt.replace(/^=+/, '').trim();
   
-  // Direct command that forces Imagen 3
-  const formattedPrompt = `Draw a realistic photo in 1:1 aspect ratio of: ${cleanPrompt}`;
-  console.log(`🚀 Sent to Gemini: ${formattedPrompt}`);
+  // Gemini Imagen 3 explicit trigger command
+  const formattedPrompt = `Draw: ${cleanPrompt}`;
+  console.log(`🚀 Sent Direct Command: ${formattedPrompt}`);
 
   let browser;
   try {
@@ -134,7 +132,7 @@ async function runAutomation(rawPrompt) {
 
     await page.click(inputSel);
     await page.fill(inputSel, formattedPrompt);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     // Trigger send via explicit Send button click or Enter key
     const sendBtnSel = 'button[aria-label*="Send message"], button[aria-label*="Send"], button.send-button, send-button';
@@ -147,26 +145,17 @@ async function runAutomation(rawPrompt) {
       await page.keyboard.press('Enter');
     }
 
-    console.log('[Gemini Render] Prompt submitted. Polling for Imagen image...');
+    console.log('[Gemini Render] Prompt sent. Watching for image...');
 
     let targetElem = null;
     const startTime = Date.now();
     let generationStarted = false;
 
-    while ((Date.now() - startTime) < 50000) {
+    while ((Date.now() - startTime) < 45000) {
       // Check if stop response button is present (generation in progress)
       const stopBtn = await page.$('button[aria-label*="Stop response"], button[aria-label*="Stop generation"], button.stop-button');
       if (stopBtn) {
         generationStarted = true;
-      }
-
-      // Check for decline / text-only messages
-      const bodyText = await page.innerText('body').catch(() => '');
-      if (bodyText.includes('I cannot create images') || bodyText.includes("I can't generate images") || bodyText.includes('Here is an idea')) {
-        console.warn(`[Gemini Render] Gemini declined image generation: ${bodyText.slice(-200)}`);
-        const err = new Error(`Gemini declined image generation: ${bodyText.slice(-200)}`);
-        err.statusCode = 400;
-        throw err;
       }
 
       const images = await page.$$('image-block img, sparkle-image img, img[src^="blob:"], img[src*="googleusercontent.com/gg/"], img[src*="googleusercontent.com"]');
@@ -184,21 +173,21 @@ async function runAutomation(rawPrompt) {
 
       if (targetElem) break;
 
-      // Smart early exit: if generation started and completed (stop button disappeared) without an image
+      // Smart early exit: if generation started and completed without an image
       if (generationStarted && !stopBtn) {
         console.log('[Gemini Render] Response completed without an image element.');
         break;
       }
 
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(2000);
     }
 
     if (!targetElem) {
-      const bodyText = await page.innerText('body').catch(() => '');
-      console.log(`[Gemini Response Preview]: ${bodyText.slice(-250)}`);
+      const textDump = await page.innerText('body').catch(() => '');
+      console.log(`❌ [Gemini Actual Output]:\n${textDump.slice(-400)}`);
       await browser.close();
       browser = null;
-      const err = new Error('Gemini responded with text instead of generating an image.');
+      const err = new Error(`Gemini did not generate an image. Check Render logs for output dump.`);
       err.statusCode = 422;
       throw err;
     }
