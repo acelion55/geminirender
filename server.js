@@ -145,9 +145,9 @@ async function runAutomation(rawPrompt) {
       await page.keyboard.press('Enter');
     }
 
-    console.log('[Gemini Render] Prompt sent. Watching for image...');
+    console.log('[Gemini Render] Prompt sent. Watching for image output...');
 
-    let targetElem = null;
+    let imageFound = false;
     const startTime = Date.now();
     let generationStarted = false;
 
@@ -158,20 +158,20 @@ async function runAutomation(rawPrompt) {
         generationStarted = true;
       }
 
-      const images = await page.$$('image-block img, sparkle-image img, img[src^="blob:"], img[src*="googleusercontent.com/gg/"], img[src*="googleusercontent.com"]');
-      for (const img of images) {
-        const src = (await img.getAttribute('src')) || '';
-        const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
-        if ((src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com')) && !isAvatar) {
-          const box = await img.boundingBox();
-          if (box && box.width > 200) {
-            targetElem = img;
-            break;
-          }
-        }
-      }
+      const hasTargetImg = await page.evaluate(() => {
+        const imgs = Array.from(document.querySelectorAll('img'));
+        return imgs.some(img => {
+          const src = img.src || '';
+          const isBlobOrGen = src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com');
+          const isNotAvatar = !src.includes('s32-') && !src.includes('s64-') && !src.includes('s96-') && !src.includes('/a/') && !src.includes('avatar') && !src.includes('profile');
+          return isBlobOrGen && isNotAvatar && (img.naturalWidth > 200 || img.clientWidth > 200);
+        });
+      });
 
-      if (targetElem) break;
+      if (hasTargetImg) {
+        imageFound = true;
+        break;
+      }
 
       // Smart early exit: if generation started and completed without an image
       if (generationStarted && !stopBtn) {
@@ -182,7 +182,7 @@ async function runAutomation(rawPrompt) {
       await page.waitForTimeout(2000);
     }
 
-    if (!targetElem) {
+    if (!imageFound) {
       const textDump = await page.innerText('body').catch(() => '');
       console.log(`❌ [Gemini Actual Output]:\n${textDump.slice(-400)}`);
       await browser.close();
@@ -192,52 +192,61 @@ async function runAutomation(rawPrompt) {
       throw err;
     }
 
-    console.log('[Gemini Render] Found generated image element! Extracting clean high-res image data...');
-    const blobUrl = await targetElem.getAttribute('src');
-    let b64Data = null;
+    console.log('[Gemini Render] Extracting pure image data via HTML5 Canvas (No UI)...');
 
-    if (blobUrl && blobUrl.startsWith('blob:')) {
-      console.log(`[Gemini Render] Converting blob URL to base64 via page.evaluate...`);
+    const base64Image = await page.evaluate(async () => {
+      const imgs = Array.from(document.querySelectorAll('img'));
+      const targetImg = imgs.find(img => {
+        const src = img.src || '';
+        const isBlobOrGen = src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com');
+        const isNotAvatar = !src.includes('s32-') && !src.includes('s64-') && !src.includes('s96-') && !src.includes('/a/') && !src.includes('avatar') && !src.includes('profile');
+        return isBlobOrGen && isNotAvatar && (img.naturalWidth > 200 || img.clientWidth > 200);
+      });
+
+      if (!targetImg) return null;
+
+      // Draw pure image directly to HTML5 canvas and export base64
       try {
-        b64Data = await page.evaluate(async (url) => {
-          const response = await fetch(url);
-          const blob = await response.blob();
-          return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-        }, blobUrl);
-        console.log('[Gemini Render] Blob converted to base64 successfully!');
-      } catch (evalErr) {
-        console.warn('[Gemini Render] Blob evaluate failed, falling back to element screenshot:', evalErr.message);
+        const canvas = document.createElement('canvas');
+        canvas.width = targetImg.naturalWidth || targetImg.clientWidth || 1024;
+        canvas.height = targetImg.naturalHeight || targetImg.clientHeight || 1024;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(targetImg, 0, 0);
+        return canvas.toDataURL('image/png');
+      } catch (canvasErr) {
+        // Fallback: If canvas is tainted or errors out, fetch blob directly
+        const res = await fetch(targetImg.src);
+        const blob = await res.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
       }
-    }
-
-    if (!b64Data) {
-      console.log('[Gemini Render] Falling back to element screenshot...');
-      await targetElem.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(500);
-      const imgBuffer = await targetElem.screenshot({ type: 'png' });
-      b64Data = `data:image/png;base64,${imgBuffer.toString('base64')}`;
-    }
+    });
 
     await browser.close();
     browser = null;
 
-    console.log('[Gemini Render] Uploading clean high-res image to Cloudinary...');
+    if (!base64Image) {
+      const err = new Error(`Failed to extract canvas base64 image data.`);
+      err.statusCode = 500;
+      throw err;
+    }
+
+    console.log('[Gemini Render] Uploading pure image base64 to Cloudinary...');
     let finalCDNUrl;
 
     if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
-      const uploadRes = await cloudinary.uploader.upload(b64Data, {
+      const uploadRes = await cloudinary.uploader.upload(base64Image, {
         folder: 'finonest_car_loans'
       });
       finalCDNUrl = uploadRes.secure_url;
       console.log('[Gemini Render] Cloudinary upload successful:', finalCDNUrl);
     } else {
-      console.warn('[Gemini Render] Cloudinary keys not found. Falling back to data URI.');
-      finalCDNUrl = b64Data;
+      console.warn('[Gemini Render] Cloudinary keys not found. Returning base64 URI.');
+      finalCDNUrl = base64Image;
     }
 
     return {
