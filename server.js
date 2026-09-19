@@ -49,9 +49,13 @@ setInterval(() => {
 
 // Helper function to execute Playwright automation
 async function runAutomation(rawPrompt) {
-  const cleanPrompt = rawPrompt.replace(/^=+/, '').trim();
-  const formattedPrompt = `Generate an image: ${cleanPrompt}. Pure visual 1:1 square aspect ratio image only, no text response.`;
-  console.log(`🚀 Prompt: "${formattedPrompt}"`);
+  let cleanPrompt = rawPrompt.replace(/^=+/, '').trim();
+  // Strip keywords that confuse Gemini into text-only mode
+  cleanPrompt = cleanPrompt.replace(/banner/gi, 'photo').replace(/advertisement/gi, 'visual scene');
+  
+  // Direct command that forces Imagen 3
+  const formattedPrompt = `Draw a realistic photo in 1:1 aspect ratio of: ${cleanPrompt}`;
+  console.log(`🚀 Sent to Gemini: ${formattedPrompt}`);
 
   let browser;
   try {
@@ -154,6 +158,15 @@ async function runAutomation(rawPrompt) {
       const stopBtn = await page.$('button[aria-label*="Stop response"], button[aria-label*="Stop generation"], button.stop-button');
       if (stopBtn) {
         generationStarted = true;
+      }
+
+      // Check for decline / text-only messages
+      const bodyText = await page.innerText('body').catch(() => '');
+      if (bodyText.includes('I cannot create images') || bodyText.includes("I can't generate images") || bodyText.includes('Here is an idea')) {
+        console.warn(`[Gemini Render] Gemini declined image generation: ${bodyText.slice(-200)}`);
+        const err = new Error(`Gemini declined image generation: ${bodyText.slice(-200)}`);
+        err.statusCode = 400;
+        throw err;
       }
 
       const images = await page.$$('image-block img, sparkle-image img, img[src^="blob:"], img[src*="googleusercontent.com/gg/"], img[src*="googleusercontent.com"]');
