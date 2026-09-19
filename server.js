@@ -151,7 +151,7 @@ async function runAutomation(rawPrompt) {
     const startTime = Date.now();
     let generationStarted = false;
 
-    while ((Date.now() - startTime) < 45000) {
+    while ((Date.now() - startTime) < 55000) {
       // Check if stop response button is present (generation in progress)
       const stopBtn = await page.$('button[aria-label*="Stop response"], button[aria-label*="Stop generation"], button.stop-button');
       if (stopBtn) {
@@ -229,20 +229,20 @@ async function runAutomation(rawPrompt) {
   }
 }
 
-// 3. Generate Image Route with Strict 80-Second Hard Timeout
+// 3. Generate Image Route with Strict 120-Second Hard Timeout
 app.post('/generate-image', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ success: false, error: 'Prompt string is required' });
   }
 
-  // 80-second hard timeout wrapper to prevent 5-minute ECONNABORTED in n8n
+  // 120-second hard timeout wrapper to ensure Cloudinary upload completes & returns JSON to n8n
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => {
-      const err = new Error('Operation timed out after 80 seconds.');
+      const err = new Error('Operation timed out after 120 seconds.');
       err.statusCode = 504;
       reject(err);
-    }, 80000);
+    }, 120000);
   });
 
   try {
