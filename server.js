@@ -119,7 +119,12 @@ app.post('/generate-image', async (req, res) => {
     }
 
     if (!promptInput) {
-      throw new Error('Could not find Gemini prompt input field. Ensure SECURE_1PSID cookie is set in Render Environment Variables.');
+      const currentUrl = page.url();
+      console.error(`[Gemini Render] Prompt input not found. Current page URL: ${currentUrl}`);
+      if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
+        throw new Error('Google redirected to Sign-In page. Your SECURE_1PSID cookie in Render Environment Variables is EXPIRED or INVALID. Please copy a fresh __Secure-1PSID cookie from Chrome.');
+      }
+      throw new Error(`Could not find Gemini prompt input field (Current URL: ${currentUrl}). Ensure SECURE_1PSID cookie is set in Render Environment Variables.`);
     }
 
     await page.click(promptInput);
