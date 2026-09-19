@@ -156,13 +156,30 @@ app.post('/generate-image', async (req, res) => {
 
     console.log('[Gemini Render] Extracted Generated Gemini Image URL:', geminiRawUrl);
 
+    // Convert blob: or remote image to Base64 in browser context for Cloudinary upload
+    let imagePayload = geminiRawUrl;
+    try {
+      console.log('[Gemini Render] Converting image to Base64 buffer...');
+      imagePayload = await page.evaluate(async (url) => {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        });
+      }, geminiRawUrl);
+    } catch (bErr) {
+      console.warn('[Gemini Render] Base64 conversion fallback note:', bErr.message);
+    }
+
     let finalCDNUrl = geminiRawUrl;
 
     // Upload to Cloudinary if credentials present
     if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
       try {
-        console.log('[Gemini Render] Uploading generated image to Cloudinary...');
-        const uploadRes = await cloudinary.uploader.upload(geminiRawUrl, {
+        console.log('[Gemini Render] Uploading generated image payload to Cloudinary...');
+        const uploadRes = await cloudinary.uploader.upload(imagePayload, {
           folder: 'finonest_car_loans',
           resource_type: 'image'
         });
