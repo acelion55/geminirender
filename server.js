@@ -132,13 +132,17 @@ app.post('/generate-image', async (req, res) => {
     const startTime = Date.now();
     let geminiRawUrl = null;
 
-    while ((Date.now() - startTime) < 60000) {
+    while ((Date.now() - startTime) < 70000) {
       const elements = await page.$$(imgSelector);
       for (const elem of elements) {
         const src = await elem.getAttribute('src');
-        if (src && src.includes('googleusercontent.com') && !src.includes('s64-') && !src.includes('s32-')) {
-          geminiRawUrl = src;
-          break;
+        // Profile avatars contain '/a/' or 's32-', 's64-', 's96-'; Imagen images contain '/gg/' or large dimensions
+        if (src && src.includes('googleusercontent.com')) {
+          const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-'].some(dim => src.includes(dim));
+          if (!isAvatar) {
+            geminiRawUrl = src;
+            break;
+          }
         }
       }
       if (geminiRawUrl) break;
@@ -146,10 +150,10 @@ app.post('/generate-image', async (req, res) => {
     }
 
     if (!geminiRawUrl) {
-      throw new Error('Gemini image generation timed out or no image found.');
+      throw new Error('Gemini image generation timed out or no generated image found.');
     }
 
-    console.log('[Gemini Render] Extracted Gemini Image URL:', geminiRawUrl);
+    console.log('[Gemini Render] Extracted Generated Gemini Image URL:', geminiRawUrl);
 
     let finalCDNUrl = geminiRawUrl;
 
