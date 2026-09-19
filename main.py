@@ -103,17 +103,33 @@ async def run_automation(raw_prompt: str):
                 cookies = json.loads(COOKIES_JSON)
                 playwright_cookies = []
                 for c in cookies:
-                    playwright_cookies.append({
-                        "name": c.get("name"),
-                        "value": c.get("value"),
-                        "domain": c.get("domain", ".google.com"),
+                    name = c.get("name")
+                    value = c.get("value")
+                    if not name or not value:
+                        continue
+                    
+                    domain = c.get("domain", ".google.com")
+                    if "google.com" not in domain:
+                        domain = ".google.com"
+
+                    cookie_obj = {
+                        "name": name,
+                        "value": value,
+                        "domain": domain,
                         "path": c.get("path", "/"),
-                        "secure": c.get("secure", True),
-                        "httpOnly": c.get("httpOnly", True),
-                        "sameSite": c.get("sameSite", "None")
-                    })
+                        "secure": True,
+                        "sameSite": "None"
+                    }
+                    if "httpOnly" in c:
+                        cookie_obj["httpOnly"] = bool(c["httpOnly"])
+                    
+                    playwright_cookies.append(cookie_obj)
+
                 await context.add_cookies(playwright_cookies)
-                print(f"[Gemini Render] {len(playwright_cookies)} cookies mounted.")
+                names = [c["name"] for c in playwright_cookies]
+                has_1psid = "__Secure-1PSID" in names
+                has_1psidts = "__Secure-1PSIDTS" in names
+                print(f"[Gemini Render] {len(playwright_cookies)} cookies mounted. (__Secure-1PSID: {has_1psid}, __Secure-1PSIDTS: {has_1psidts})")
             except Exception as e:
                 print(f"[Cookie Error]: {e}")
         elif SECURE_1PSID:
@@ -134,9 +150,9 @@ async def run_automation(raw_prompt: str):
         except Exception as e:
             content = await page.content()
             curr_url = page.url
-            if "Sign in" in content or "accounts.google.com" in curr_url:
-                print("[Gemini Render] Session expired / Bot detected.")
-                raise HTTPException(status_code=401, detail="Google session verification required.")
+            if "Sign in" in content or "accounts.google.com" in curr_url or "Sign In" in content:
+                print("[Gemini Render] Session expired / Bot detected. Google redirect to login.")
+                raise HTTPException(status_code=401, detail="Google session expired. Fresh GOOGLE_COOKIES_JSON export required.")
             raise HTTPException(status_code=504, detail=f"Timeout waiting for prompt box. (URL: {curr_url})")
 
         await page.click(input_sel)
