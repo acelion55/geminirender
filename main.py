@@ -4,7 +4,17 @@ import asyncio
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
+
+# Robust import for playwright_stealth across versions
+try:
+    from playwright_stealth import stealth_async
+except ImportError:
+    try:
+        from playwright_stealth import stealth_sync as stealth_async
+    except ImportError:
+        import playwright_stealth
+        stealth_async = getattr(playwright_stealth, "stealth_async", getattr(playwright_stealth, "stealth", None))
+
 import cloudinary
 import cloudinary.uploader
 import httpx
@@ -58,6 +68,15 @@ async def keep_awake():
 async def startup_event():
     asyncio.create_task(keep_awake())
 
+async def apply_stealth(page):
+    if stealth_async:
+        try:
+            res = stealth_async(page)
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception as e:
+            print(f"[Stealth Warning]: {e}")
+
 async def run_automation(raw_prompt: str):
     clean_prompt = raw_prompt.lstrip("=").strip()
     formatted_prompt = f"Draw: {clean_prompt}"
@@ -104,7 +123,7 @@ async def run_automation(raw_prompt: str):
             ])
 
         page = await context.new_page()
-        await stealth_async(page)
+        await apply_stealth(page)
 
         print("[Gemini Render] Navigating to Gemini...")
         await page.goto("https://gemini.google.com/app", wait_until="commit", timeout=40000)

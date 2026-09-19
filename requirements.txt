@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 playwright==1.45.0
-playwright-stealth
+playwright-stealth==1.0.6
 cloudinary
 pydantic
 httpx
