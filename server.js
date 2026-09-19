@@ -77,7 +77,8 @@ app.post('/generate-image', async (req, res) => {
           domain: '.google.com',
           path: '/',
           secure: true,
-          httpOnly: true
+          httpOnly: true,
+          sameSite: 'None'
         }
       ];
 
@@ -88,12 +89,39 @@ app.post('/generate-image', async (req, res) => {
           domain: '.google.com',
           path: '/',
           secure: true,
-          httpOnly: true
+          httpOnly: true,
+          sameSite: 'None'
+        });
+      }
+
+      const SECURE_3PSID = process.env.SECURE_3PSID || '';
+      if (SECURE_3PSID) {
+        cookies.push({
+          name: '__Secure-3PSID',
+          value: SECURE_3PSID,
+          domain: '.google.com',
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          sameSite: 'None'
+        });
+      }
+
+      const SECURE_3PSIDTS = process.env.SECURE_3PSIDTS || '';
+      if (SECURE_3PSIDTS) {
+        cookies.push({
+          name: '__Secure-3PSIDTS',
+          value: SECURE_3PSIDTS,
+          domain: '.google.com',
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          sameSite: 'None'
         });
       }
 
       await context.addCookies(cookies);
-      console.log('[Gemini Render] Cookies injected successfully.');
+      console.log(`[Gemini Render] ${cookies.length} Google cookies injected successfully.`);
     } else {
       console.warn('[Gemini Render] Warning: SECURE_1PSID environment variable is not set!');
     }
