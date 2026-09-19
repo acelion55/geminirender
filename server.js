@@ -3,8 +3,6 @@ const { chromium } = require('playwright');
 const cloudinary = require('cloudinary').v2;
 const http = require('http');
 const https = require('https');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -55,7 +53,7 @@ async function runAutomation(rawPrompt) {
   
   // Gemini Imagen 3 explicit trigger command
   const formattedPrompt = `Draw: ${cleanPrompt}`;
-  console.log(`🚀 Sent Direct Command: ${formattedPrompt}`);
+  console.log(`🚀 Sent Prompt: ${formattedPrompt}`);
 
   let browser;
   try {
@@ -66,13 +64,12 @@ async function runAutomation(rawPrompt) {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--disable-blink-features=AutomationControlled'
+        '--single-process'
       ]
     });
 
     const context = await browser.newContext({
-      viewport: { width: 1280, height: 900 },
-      acceptDownloads: true,
+      viewport: { width: 1024, height: 768 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     });
 
@@ -98,9 +95,9 @@ async function runAutomation(rawPrompt) {
           sameSite: c.sameSite || 'None'
         }));
         await context.addCookies(formattedCookies);
-        console.log(`[Gemini Render] ${formattedCookies.length} cookies injected from GOOGLE_COOKIES_JSON.`);
+        console.log(`[Gemini Render] ${formattedCookies.length} cookies mounted.`);
       } catch (e) {
-        console.error('[Gemini Render] Error parsing GOOGLE_COOKIES_JSON:', e.message);
+        console.error('[Cookie Error]:', e.message);
       }
     } else if (SECURE_1PSID) {
       await context.addCookies([
@@ -111,14 +108,14 @@ async function runAutomation(rawPrompt) {
       console.warn('[Gemini Render] Warning: No Google cookies configured!');
     }
 
-    console.log('[Gemini Render] Navigating to Gemini with fast commit strategy...');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 45000 });
+    console.log('[Gemini Render] Navigating to Gemini...');
+    await page.goto('https://gemini.google.com/app', { waitUntil: 'commit', timeout: 40000 });
 
     // Selector for Gemini prompt input box
     const inputSel = 'rich-textarea p, div[contenteditable="true"], p[data-placeholder]';
     console.log('[Gemini Render] Waiting for prompt input box...');
     try {
-      await page.waitForSelector(inputSel, { timeout: 35000 });
+      await page.waitForSelector(inputSel, { timeout: 30000 });
     } catch (e) {
       const pageText = await page.content();
       const currentUrl = page.url();
@@ -138,7 +135,7 @@ async function runAutomation(rawPrompt) {
     await page.waitForTimeout(500);
 
     // Trigger send via explicit Send button click or Enter key
-    const sendBtnSel = 'button[aria-label*="Send message"], button[aria-label*="Send"], button.send-button, send-button';
+    const sendBtnSel = 'button[aria-label*="Send message"], button[aria-label*="Send"]';
     const sendBtn = await page.$(sendBtnSel);
     if (sendBtn && await sendBtn.isEnabled()) {
       console.log('[Gemini Render] Clicking Send button...');
@@ -148,107 +145,68 @@ async function runAutomation(rawPrompt) {
       await page.keyboard.press('Enter');
     }
 
-    console.log('[Gemini Render] Prompt sent. Waiting for Imagen image output...');
+    console.log('[Gemini Render] Prompt sent. Polling for generated <img> element...');
 
-    let targetImg = null;
     const startTime = Date.now();
+    let base64Data = null;
 
-    while ((Date.now() - startTime) < 60000) {
-      const images = await page.$$('img');
-      for (const img of images) {
-        const src = (await img.getAttribute('src')) || '';
-        const isBlobOrGen = src.startsWith('blob:') || src.includes('/gg/') || src.includes('googleusercontent.com');
-        const isNotAvatar = !['s32-', 's64-', 's96-', 's128-', '/a/', 'avatar', 'profile'].some(dim => src.includes(dim));
-        if (isBlobOrGen && isNotAvatar) {
-          const box = await img.boundingBox();
-          if (box && box.width > 200) {
-            targetImg = img;
-            break;
-          }
+    while ((Date.now() - startTime) < 65000) {
+      base64Data = await page.evaluate(() => {
+        const imgs = Array.from(document.querySelectorAll('img'));
+        const target = imgs.find(img => {
+          const src = img.src || '';
+          const isValidSrc = src.startsWith('blob:') || src.includes('googleusercontent.com') || src.includes('/gg/');
+          const isNotIcon = !src.includes('s32-') && !src.includes('s64-') && !src.includes('s96-') && !src.includes('/a/') && !src.includes('avatar') && !src.includes('profile');
+          return isValidSrc && isNotIcon && img.naturalWidth > 200;
+        });
+
+        if (!target) return null;
+
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = target.naturalWidth;
+          canvas.height = target.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(target, 0, 0);
+          return canvas.toDataURL('image/png');
+        } catch (e) {
+          return null;
         }
+      });
+
+      if (base64Data) {
+        console.log('✅ Found pure image and converted to DataURL!');
+        break;
       }
 
-      if (targetImg) break;
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(2500);
     }
 
-    if (!targetImg) {
+    if (!base64Data) {
       const textDump = await page.innerText('body').catch(() => '');
-      console.log(`❌ [Gemini Actual Output]:\n${textDump.slice(-350)}`);
+      console.log(`❌ [Gemini Output Dump]:\n${textDump.slice(-300)}`);
       await browser.close();
       browser = null;
-      const err = new Error(`Gemini did not generate an image. Check Render logs for output dump.`);
+      const err = new Error(`Gemini did not generate an image.`);
       err.statusCode = 422;
       throw err;
-    }
-
-    console.log('[Gemini Render] Target image located. Attempting native Gemini download trigger...');
-
-    let fileToUpload = null;
-    let isTempFile = false;
-
-    try {
-      await targetImg.scrollIntoViewIfNeeded();
-      await targetImg.hover();
-      await page.waitForTimeout(500);
-
-      const downloadBtnSel = 'button[aria-label*="Download"], button[mattooltip*="Download"], [data-test-id*="download"], a[download]';
-      const downloadBtn = await page.$(downloadBtnSel);
-
-      if (downloadBtn) {
-        console.log('[Gemini Render] Clicked native Download button, awaiting download event...');
-        const [download] = await Promise.all([
-          page.waitForEvent('download', { timeout: 12000 }),
-          downloadBtn.click()
-        ]);
-        const tempDir = '/tmp';
-        if (!fs.existsSync(tempDir)) {
-          fs.mkdirSync(tempDir, { recursive: true });
-        }
-        const tempPath = path.join(tempDir, download.suggestedFilename() || 'gemini_output.png');
-        await download.saveAs(tempPath);
-        fileToUpload = tempPath;
-        isTempFile = true;
-        console.log(`[Gemini Render] Downloaded original file successfully to ${tempPath}`);
-      }
-    } catch (dlErr) {
-      console.warn('[Gemini Render] Native download trigger fallback:', dlErr.message);
-    }
-
-    // Fallback: Extract direct bytes via page fetch if button click failed
-    if (!fileToUpload) {
-      console.log('[Gemini Render] Direct blob fetch fallback activated...');
-      const blobUrl = await targetImg.getAttribute('src');
-      fileToUpload = await page.evaluate(async (url) => {
-        const res = await fetch(url);
-        const blob = await res.blob();
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        });
-      }, blobUrl);
     }
 
     await browser.close();
     browser = null;
 
-    console.log('[Gemini Render] Uploading original pure image to Cloudinary...');
+    console.log('[Gemini Render] Uploading pure base64 to Cloudinary...');
     let finalCDNUrl;
 
     if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
-      const uploadRes = await cloudinary.uploader.upload(fileToUpload, {
+      const uploadRes = await cloudinary.uploader.upload(base64Data, {
         folder: 'finonest_car_loans'
       });
       finalCDNUrl = uploadRes.secure_url;
       console.log('[Gemini Render] Cloudinary upload successful:', finalCDNUrl);
     } else {
-      console.warn('[Gemini Render] Cloudinary keys not found. Returning file data.');
-      finalCDNUrl = fileToUpload;
-    }
-
-    if (isTempFile && fileToUpload && fs.existsSync(fileToUpload)) {
-      try { fs.unlinkSync(fileToUpload); } catch (_) {}
+      console.warn('[Gemini Render] Cloudinary keys not found. Returning DataURL.');
+      finalCDNUrl = base64Data;
     }
 
     return {
@@ -265,20 +223,20 @@ async function runAutomation(rawPrompt) {
   }
 }
 
-// 3. Generate Image Route with Strict 120-Second Hard Timeout
+// 3. Generate Image Route with Enforced 100-Second Hard Timeout
 app.post('/generate-image', async (req, res) => {
   const { prompt } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ success: false, error: 'Prompt string is required' });
   }
 
-  // 120-second hard timeout wrapper to ensure Cloudinary upload completes & returns JSON to n8n
+  // Enforce maximum 100 seconds to stay safely below Render/n8n limits
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => {
-      const err = new Error('Operation timed out after 120 seconds.');
+      const err = new Error('Operation timed out after 100 seconds.');
       err.statusCode = 504;
       reject(err);
-    }, 120000);
+    }, 100000);
   });
 
   try {
