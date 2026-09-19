@@ -150,6 +150,13 @@ app.post('/generate-image', async (req, res) => {
       } catch (_) {}
     }
 
+    // Check if Gemini is showing an unauthenticated landing page with "Sign in"
+    const signInBtn = await page.$('a[href*="accounts.google.com"], button:has-text("Sign in"), a:has-text("Sign in")');
+    if (signInBtn) {
+      console.error('[Gemini Render] Gemini page displays "Sign in" button. Cookies are missing or invalid.');
+      throw new Error('Google Gemini is asking to "Sign in". Your SECURE_1PSID cookie in Render Environment Variables is missing or invalid. Please update SECURE_1PSID in Render.');
+    }
+
     const promptSelectors = [
       'div[role="textbox"]',
       'div[contenteditable="true"]',
