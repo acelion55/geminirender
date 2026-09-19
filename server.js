@@ -128,25 +128,26 @@ app.post('/generate-image', async (req, res) => {
 
     console.log('[Gemini Render] Prompt submitted. Waiting for Imagen 3 output...');
 
-    const imgSelector = 'img[src*="googleusercontent.com"]';
     const startTime = Date.now();
     let geminiRawUrl = null;
 
-    while ((Date.now() - startTime) < 70000) {
-      const elements = await page.$$(imgSelector);
+    while ((Date.now() - startTime) < 75000) {
+      const elements = await page.$$('img');
       for (const elem of elements) {
         const src = await elem.getAttribute('src');
-        // Profile avatars contain '/a/' or 's32-', 's64-', 's96-'; Imagen images contain '/gg/' or large dimensions
-        if (src && src.includes('googleusercontent.com')) {
-          const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-'].some(dim => src.includes(dim));
-          if (!isAvatar) {
+        if (src) {
+          const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-', 's192-', 's256-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
+          const isGeneratedImg = (src.includes('googleusercontent.com') || src.includes('/gg/') || src.includes('generativeai') || src.startsWith('blob:')) && !isAvatar;
+          
+          if (isGeneratedImg) {
             geminiRawUrl = src;
+            console.log('[Gemini Render] Found matching generated image URL:', src);
             break;
           }
         }
       }
       if (geminiRawUrl) break;
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(2500);
     }
 
     if (!geminiRawUrl) {
