@@ -69,8 +69,34 @@ app.post('/generate-image', async (req, res) => {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
     });
 
+    const page = await context.newPage();
+
+    // Stealth script to hide Playwright automation traces from Google
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = window.chrome || { runtime: {} };
+    });
+
     // Inject Google Gemini session cookies
-    if (SECURE_1PSID) {
+    const GOOGLE_COOKIES_JSON = process.env.GOOGLE_COOKIES_JSON || '';
+    if (GOOGLE_COOKIES_JSON) {
+      try {
+        const parsedCookies = JSON.parse(GOOGLE_COOKIES_JSON);
+        const formattedCookies = parsedCookies.map(c => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain || '.google.com',
+          path: c.path || '/',
+          secure: c.secure !== false,
+          httpOnly: c.httpOnly !== false,
+          sameSite: c.sameSite || 'None'
+        }));
+        await context.addCookies(formattedCookies);
+        console.log(`[Gemini Render] ${formattedCookies.length} cookies injected from GOOGLE_COOKIES_JSON.`);
+      } catch (e) {
+        console.error('[Gemini Render] Error parsing GOOGLE_COOKIES_JSON:', e.message);
+      }
+    } else if (SECURE_1PSID) {
       const cookies = [
         {
           name: '__Secure-1PSID',
@@ -88,6 +114,15 @@ app.post('/generate-image', async (req, res) => {
           path: '/',
           secure: true,
           httpOnly: true,
+          sameSite: 'None'
+        },
+        {
+          name: 'SID',
+          value: SECURE_1PSID,
+          domain: '.google.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
           sameSite: 'None'
         }
       ];
@@ -119,7 +154,6 @@ app.post('/generate-image', async (req, res) => {
       console.warn('[Gemini Render] Warning: SECURE_1PSID environment variable is not set!');
     }
 
-    const page = await context.newPage();
     console.log('[Gemini Render] Navigating to Gemini...');
     await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
