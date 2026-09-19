@@ -137,7 +137,7 @@ app.post('/generate-image', async (req, res) => {
         const src = await elem.getAttribute('src');
         if (src) {
           const isAvatar = src.includes('/a/') || ['s32-', 's64-', 's96-', 's128-', 's192-', 's256-'].some(dim => src.includes(dim)) || src.includes('avatar') || src.includes('profile');
-          const isGeneratedImg = (src.includes('googleusercontent.com') || src.includes('/gg/') || src.includes('generativeai') || src.startsWith('blob:')) && !isAvatar;
+          const isGeneratedImg = (src.startsWith('blob:') || src.includes('/gg/') || src.includes('generativeai') || src.includes('googleusercontent.com')) && !isAvatar;
           
           if (isGeneratedImg) {
             geminiRawUrl = src;
@@ -157,10 +157,10 @@ app.post('/generate-image', async (req, res) => {
     console.log('[Gemini Render] Extracted Generated Gemini Image URL:', geminiRawUrl);
 
     // Convert blob: or remote image to Base64 in browser context for Cloudinary upload
-    let imagePayload = geminiRawUrl;
+    let base64Data = geminiRawUrl;
     try {
-      console.log('[Gemini Render] Converting image to Base64 buffer...');
-      imagePayload = await page.evaluate(async (url) => {
+      console.log('[Gemini Render] Converting blob/image to Base64 data-URI in browser...');
+      base64Data = await page.evaluate(async (url) => {
         const response = await fetch(url);
         const blob = await response.blob();
         return new Promise((resolve) => {
@@ -170,33 +170,38 @@ app.post('/generate-image', async (req, res) => {
         });
       }, geminiRawUrl);
     } catch (bErr) {
-      console.warn('[Gemini Render] Base64 conversion fallback note:', bErr.message);
+      console.warn('[Gemini Render] Base64 conversion warning:', bErr.message);
     }
+
+    await browser.close();
+    browser = null;
 
     let finalCDNUrl = geminiRawUrl;
 
-    // Upload to Cloudinary if credentials present
+    // Upload Base64 data to Cloudinary if credentials present
     if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
       try {
-        console.log('[Gemini Render] Uploading generated image payload to Cloudinary...');
-        const uploadRes = await cloudinary.uploader.upload(imagePayload, {
+        console.log('[Gemini Render] Uploading Base64 image payload to Cloudinary...');
+        const uploadRes = await cloudinary.uploader.upload(base64Data, {
           folder: 'finonest_car_loans',
           resource_type: 'image'
         });
         finalCDNUrl = uploadRes.secure_url;
         console.log('[Gemini Render] Uploaded to Cloudinary successfully:', finalCDNUrl);
       } catch (cloudErr) {
-        console.error('[Gemini Render] Cloudinary upload error, fallback to raw URL:', cloudErr.message);
+        console.error('[Gemini Render] Cloudinary upload error:', cloudErr.message);
+        throw new Error(`Cloudinary Upload Failed: ${cloudErr.message}`);
       }
+    } else {
+      console.warn('[Gemini Render] WARNING: Cloudinary environment variables are missing! Returning blob URL.');
+      throw new Error('Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) missing on Render.');
     }
 
-    await browser.close();
     return res.json({ 
       status: 'success',
       success: true, 
       aspect_ratio: '1:1',
-      image_url: finalCDNUrl,
-      raw_google_url: geminiRawUrl
+      image_url: finalCDNUrl
     });
 
   } catch (err) {
