@@ -159,7 +159,7 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
             # Search for DALL-E image tags or general rendered images in assistant messages
             eval_js = """
             () => {
-                // Strategy 1: Look for any img in assistant conversation turns
+                // Strategy 1: Look for real DALL-E img elements in assistant turns
                 const articles = Array.from(document.querySelectorAll("article, div[data-message-author-role='assistant'], div[class*='agent-turn']"));
                 for (let i = articles.length - 1; i >= 0; i--) {
                     const article = articles[i];
@@ -171,17 +171,13 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
                         const src = img.currentSrc || img.src || img.getAttribute("src") || "";
                         if (!src) continue;
                         if (src.includes("avatar") || src.includes("profile") || src.includes("googleusercontent") || src.endsWith(".svg")) continue;
-                        return { src: src, alt: img.alt || "" };
-                    }
-
-                    const canvases = Array.from(article.querySelectorAll("canvas"));
-                    if (canvases.length > 0) {
-                        try {
-                            const dataUrl = canvases[0].toDataURL("image/png");
-                            if (dataUrl && dataUrl.length > 500) {
-                                return { src: dataUrl, isCanvas: true };
-                            }
-                        } catch(e) {}
+                        
+                        // Ensure image has finished loading and is not a tiny icon/placeholder
+                        const width = img.naturalWidth || img.width || 0;
+                        const height = img.naturalHeight || img.height || 0;
+                        if (img.complete && (width > 150 || height > 150 || src.includes("oaiusercontent") || src.includes("oaidalleapiprod"))) {
+                            return { src: src, alt: img.alt || "" };
+                        }
                     }
                 }
 
@@ -192,7 +188,9 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
                     if (!src) continue;
                     if (src.includes("avatar") || src.includes("profile") || src.includes("googleusercontent") || src.endsWith(".svg")) continue;
                     if (src.includes("oaiusercontent") || src.includes("oaidalleapiprod") || src.includes("files.oai") || (img.alt && img.alt.toLowerCase().includes("generated"))) {
-                        return { src: src, alt: img.alt || "" };
+                        if (img.complete && (img.naturalWidth > 150 || img.naturalHeight > 150)) {
+                            return { src: src, alt: img.alt || "" };
+                        }
                     }
                 }
                 return null;
@@ -201,29 +199,26 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
             result = await page.evaluate(eval_js)
             if result and result.get("src"):
                 img_src = result["src"]
-                print(f"[ChatGPT Render] Found image element on attempt {attempt}: {img_src[:60]}...")
-                
-                if result.get("isCanvas") or img_src.startswith("data:image"):
-                    final_image_data = img_src
-                    print("[ChatGPT Render] Extracted directly from canvas!")
-                    break
+                print(f"[ChatGPT Render] Found real image element on attempt {attempt}: {img_src[:70]}...")
 
                 # Multi-tier extraction: Canvas -> Fetch -> Direct HTTP URL fallback
                 b64_js = """
                 async (targetSrc) => {
-                    // Method 1: Draw onto Canvas
+                    if (targetSrc.startsWith("data:image")) return targetSrc;
+
+                    // Method 1: Draw onto Canvas (ensuring natural dimensions)
                     try {
                         const imgs = Array.from(document.querySelectorAll('img'));
                         const targetImg = imgs.find(i => (i.currentSrc || i.src) === targetSrc) || imgs.find(i => i.src && i.src.includes(targetSrc));
-                        if (targetImg) {
+                        if (targetImg && targetImg.complete && targetImg.naturalWidth > 100) {
                             targetImg.scrollIntoView({ block: 'center' });
                             const canvas = document.createElement('canvas');
-                            canvas.width = targetImg.naturalWidth || targetImg.width || 1024;
-                            canvas.height = targetImg.naturalHeight || targetImg.height || 1024;
+                            canvas.width = targetImg.naturalWidth;
+                            canvas.height = targetImg.naturalHeight;
                             const ctx = canvas.getContext('2d');
-                            ctx.drawImage(targetImg, 0, 0, canvas.width, canvas.height);
+                            ctx.drawImage(targetImg, 0, 0);
                             const dataUrl = canvas.toDataURL('image/png');
-                            if (dataUrl && dataUrl.length > 500 && !dataUrl.includes("data:image/png;base64,iVBORw0KGgoAAAANSUEUgAAAAEAAAAB")) {
+                            if (dataUrl && dataUrl.length > 50000) {
                                 return dataUrl;
                             }
                         }
@@ -231,9 +226,10 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
                         console.log("Canvas export error:", e);
                     }
 
-                    // Method 2: Fetch blob with credentials
+                    // Method 2: Fetch blob (no credentials header for blob: URLs)
                     try {
-                        const resp = await fetch(targetSrc, { credentials: 'include' });
+                        const fetchOpts = targetSrc.startsWith("blob:") ? {} : { credentials: 'include' };
+                        const resp = await fetch(targetSrc, fetchOpts);
                         const blob = await resp.blob();
                         return new Promise((resolve) => {
                             const reader = new FileReader();
@@ -253,9 +249,9 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
                 """
                 try:
                     extracted_data = await page.evaluate(b64_js, img_src)
-                    if extracted_data and len(extracted_data) > 30:
+                    if extracted_data and len(extracted_data) > 100:
                         final_image_data = extracted_data
-                        print("[ChatGPT Render] Successfully extracted image data!")
+                        print(f"[ChatGPT Render] Successfully extracted full image! (Length: {len(extracted_data)} chars)")
                         break
                 except Exception as e:
                     print(f"[ChatGPT Fetch Warning]: {e}")
