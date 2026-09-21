@@ -232,12 +232,59 @@ async def run_automation(raw_prompt: str):
             "image_url": final_cdn_url
         }
 
+from chatgpt import run_chatgpt_automation
+
 @app.post("/generate-image")
 async def generate_image(req: ImageRequest):
     try:
         return await asyncio.wait_for(run_automation(req.prompt), timeout=120.0)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Operation timed out after 120 seconds.")
+
+@app.post("/generate-chatgpt-image")
+async def generate_chatgpt_image(req: ImageRequest):
+    try:
+        return await asyncio.wait_for(run_chatgpt_automation(req.prompt), timeout=120.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="ChatGPT operation timed out after 120 seconds.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-dual-images")
+async def generate_dual_images(req: ImageRequest):
+    try:
+        print(f"🚀 Launching simultaneous Gemini + ChatGPT generation for: {req.prompt}")
+        gemini_task = run_automation(req.prompt)
+        chatgpt_task = run_chatgpt_automation(req.prompt)
+
+        results = await asyncio.wait_for(
+            asyncio.gather(gemini_task, chatgpt_task, return_exceptions=True),
+            timeout=150.0
+        )
+
+        gemini_res, chatgpt_res = results
+
+        gemini_url = gemini_res.get("image_url") if isinstance(gemini_res, dict) else None
+        chatgpt_url = chatgpt_res.get("image_url") if isinstance(chatgpt_res, dict) else None
+
+        return {
+            "status": "success",
+            "prompt": req.prompt,
+            "gemini": {
+                "success": isinstance(gemini_res, dict) and gemini_res.get("success", False),
+                "image_url": gemini_url,
+                "error": str(gemini_res) if isinstance(gemini_res, Exception) else None
+            },
+            "chatgpt": {
+                "success": isinstance(chatgpt_res, dict) and chatgpt_res.get("success", False),
+                "image_url": chatgpt_url,
+                "error": str(chatgpt_res) if isinstance(chatgpt_res, Exception) else None
+            }
+        }
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Dual generation timed out after 150 seconds.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
