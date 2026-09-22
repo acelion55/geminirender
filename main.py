@@ -82,17 +82,29 @@ async def run_automation(raw_prompt: str):
         formatted_prompt = clean_prompt
     print(f"🚀 Sent Prompt: {formatted_prompt}")
 
+    proxy_server = os.getenv("PROXY_SERVER", "http://31.59.20.176:6754")
+    proxy_user = os.getenv("PROXY_USER", "tpzfdhog")
+    proxy_pass = os.getenv("PROXY_PASS", "kd7amq3v88pt")
+
+    launch_args = {
+        "headless": True,
+        "args": [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-blink-features=AutomationControlled"
+        ]
+    }
+    if proxy_server:
+        launch_args["proxy"] = {
+            "server": proxy_server,
+            "username": proxy_user,
+            "password": proxy_pass
+        }
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled"
-            ]
-        )
+        browser = await p.chromium.launch(**launch_args)
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
