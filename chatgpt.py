@@ -128,7 +128,7 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
         # Check for prompt textarea
         input_selector = "#prompt-textarea, textarea, div[contenteditable='true']"
         try:
-            await page.wait_for_selector(input_selector, timeout=15000)
+            await page.wait_for_selector(input_selector, timeout=35000)
         except Exception:
             print("[ChatGPT Render] Prompt input not found or auth expired.")
             await browser.close()
