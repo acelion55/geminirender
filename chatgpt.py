@@ -73,13 +73,17 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
 
-        cookies_env = os.getenv("CHATGPT_COOKIES_JSON")
-        if not cookies_env and os.path.exists("chatgpt_cookies.json"):
+        cookies_env = None
+        if os.path.exists("chatgpt_cookies.json"):
             try:
                 with open("chatgpt_cookies.json", "r", encoding="utf-8-sig") as f:
                     cookies_env = f.read()
+                    print("[ChatGPT Render] Using fresh chatgpt_cookies.json file.")
             except Exception as e:
                 print(f"[ChatGPT Cookie File Error]: {e}")
+
+        if not cookies_env:
+            cookies_env = os.getenv("CHATGPT_COOKIES_JSON")
 
         if cookies_env:
             try:

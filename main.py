@@ -99,13 +99,17 @@ async def run_automation(raw_prompt: str):
         )
 
 
-        cookies_env = os.getenv("GOOGLE_COOKIES_JSON")
-        if not cookies_env and os.path.exists("cookies.json"):
+        cookies_env = None
+        if os.path.exists("cookies.json"):
             try:
                 with open("cookies.json", "r", encoding="utf-8-sig") as f:
                     cookies_env = f.read()
+                    print("[Gemini Render] Using fresh cookies.json file.")
             except Exception as e:
                 print(f"[Gemini Cookie File Error]: {e}")
+        
+        if not cookies_env:
+            cookies_env = os.getenv("GOOGLE_COOKIES_JSON")
 
         if cookies_env:
             try:
