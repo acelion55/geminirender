@@ -82,9 +82,9 @@ async def run_automation(raw_prompt: str):
         formatted_prompt = clean_prompt
     print(f"🚀 Sent Prompt: {formatted_prompt}")
 
-    proxy_server = os.getenv("PROXY_SERVER", "http://31.59.20.176:6754")
-    proxy_user = os.getenv("PROXY_USER", "tpzfdhog")
-    proxy_pass = os.getenv("PROXY_PASS", "kd7amq3v88pt")
+    proxy_server = os.getenv("PROXY_SERVER", None)
+    proxy_user = os.getenv("PROXY_USER", None)
+    proxy_pass = os.getenv("PROXY_PASS", None)
 
     launch_args = {
         "headless": True,
