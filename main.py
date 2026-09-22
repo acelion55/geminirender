@@ -107,12 +107,12 @@ async def run_automation(raw_prompt: str):
                 names_added = set()
 
                 for c in cookies:
-                    name = c.get("name")
-                    value = c.get("value")
+                    name = str(c.get("name", "")).strip()
+                    value = str(c.get("value", "")).strip()
                     if not name or not value:
                         continue
 
-                    domain = c.get("domain", ".google.com").strip()
+                    domain = str(c.get("domain", ".google.com")).strip()
                     if not domain:
                         domain = ".google.com"
 
@@ -120,12 +120,13 @@ async def run_automation(raw_prompt: str):
                         "name": name,
                         "value": value,
                         "domain": domain,
-                        "path": c.get("path", "/"),
+                        "path": str(c.get("path", "/")).strip() or "/",
+                        "secure": bool(c.get("secure", True)),
+                        "httpOnly": bool(c.get("httpOnly", False))
                     }
-                    if "secure" in c:
-                        cookie_obj["secure"] = bool(c["secure"])
-                    if "httpOnly" in c:
-                        cookie_obj["httpOnly"] = bool(c["httpOnly"])
+                    same_site = str(c.get("sameSite", "")).strip().capitalize()
+                    if same_site in ["Strict", "Lax", "None"]:
+                        cookie_obj["sameSite"] = same_site
 
                     playwright_cookies.append(cookie_obj)
                     names_added.add(name)
