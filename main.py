@@ -239,16 +239,16 @@ from chatgpt import run_chatgpt_automation
 @app.post("/generate-image")
 async def generate_image(req: ImageRequest):
     try:
-        return await asyncio.wait_for(run_automation(req.prompt), timeout=120.0)
+        return await asyncio.wait_for(run_automation(req.prompt), timeout=150.0)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Operation timed out after 120 seconds.")
+        raise HTTPException(status_code=504, detail="Operation timed out after 150 seconds.")
 
 @app.post("/generate-chatgpt-image")
 async def generate_chatgpt_image(req: ImageRequest):
     try:
-        return await asyncio.wait_for(run_chatgpt_automation(req.prompt), timeout=120.0)
+        return await asyncio.wait_for(run_chatgpt_automation(req.prompt), timeout=150.0)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="ChatGPT operation timed out after 120 seconds.")
+        raise HTTPException(status_code=504, detail="ChatGPT operation timed out after 150 seconds.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
