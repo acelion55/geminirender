@@ -278,16 +278,23 @@ async def generate_chatgpt_image(req: ImageRequest):
 @app.post("/generate-dual-images")
 async def generate_dual_images(req: ImageRequest):
     try:
-        print(f"🚀 Launching simultaneous Gemini + ChatGPT generation for: {req.prompt}")
-        gemini_task = run_automation(req.prompt)
-        chatgpt_task = run_chatgpt_automation(req.prompt)
+        print(f"🚀 Launching Gemini + ChatGPT generation for: {req.prompt}")
+        
+        # Run Gemini first
+        gemini_res = None
+        try:
+            gemini_res = await asyncio.wait_for(run_automation(req.prompt), timeout=90.0)
+        except Exception as e:
+            print(f"⚠️ Gemini Dual Exception: {e}")
+            gemini_res = e
 
-        results = await asyncio.wait_for(
-            asyncio.gather(gemini_task, chatgpt_task, return_exceptions=True),
-            timeout=150.0
-        )
-
-        gemini_res, chatgpt_res = results
+        # Run ChatGPT second
+        chatgpt_res = None
+        try:
+            chatgpt_res = await asyncio.wait_for(run_chatgpt_automation(req.prompt), timeout=90.0)
+        except Exception as e:
+            print(f"⚠️ ChatGPT Dual Exception: {e}")
+            chatgpt_res = e
 
         gemini_url = gemini_res.get("image_url") if isinstance(gemini_res, dict) else None
         chatgpt_url = chatgpt_res.get("image_url") if isinstance(chatgpt_res, dict) else None
