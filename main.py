@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import base64
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
@@ -200,32 +201,65 @@ async def run_automation(raw_prompt: str):
         base64_data = None
 
         while (asyncio.get_event_loop().time() - start_time) < 65.0:
-            base64_data = await page.evaluate('''() => {
+            raw_extracted = await page.evaluate('''async () => {
                 const imgs = Array.from(document.querySelectorAll('img'));
                 const target = imgs.find(img => {
-                    const src = img.src || '';
-                    const isValidSrc = src.startsWith('blob:') || src.includes('googleusercontent.com') || src.includes('/gg/');
+                    const src = img.src || img.currentSrc || '';
+                    const isValidSrc = src.startsWith('blob:') || src.includes('googleusercontent.com') || src.includes('/gg/') || src.includes('lh3.');
                     const isNotIcon = !src.includes('s32-') && !src.includes('s64-') && !src.includes('s96-') && !src.includes('/a/') && !src.includes('avatar') && !src.includes('profile');
-                    return isValidSrc && isNotIcon && img.naturalWidth > 200;
+                    const width = img.naturalWidth || img.width || 0;
+                    return isValidSrc && isNotIcon && width > 150;
                 });
 
                 if (!target) return null;
 
+                const targetSrc = target.currentSrc || target.src;
+
+                // Tier 1: Try Canvas
                 try {
                     const canvas = document.createElement('canvas');
-                    canvas.width = target.naturalWidth;
-                    canvas.height = target.naturalHeight;
+                    canvas.width = target.naturalWidth || target.width;
+                    canvas.height = target.naturalHeight || target.height;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(target, 0, 0);
-                    return canvas.toDataURL('image/png');
-                } catch (e) {
-                    return null;
-                }
+                    const dataUrl = canvas.toDataURL('image/png');
+                    if (dataUrl && dataUrl.length > 5000) return dataUrl;
+                } catch (e) {}
+
+                // Tier 2: Try Fetch
+                try {
+                    const resp = await fetch(targetSrc, { credentials: 'include' });
+                    const blob = await resp.blob();
+                    return await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                } catch (e) {}
+
+                // Tier 3: Return raw URL
+                return targetSrc;
             }''')
 
-            if base64_data:
-                print("✅ Found pure image and converted to DataURL via Canvas!")
-                break
+            if raw_extracted:
+                if raw_extracted.startswith("data:image"):
+                    base64_data = raw_extracted
+                    print("✅ Found Gemini image and converted to DataURL!")
+                    break
+                elif raw_extracted.startswith("http"):
+                    try:
+                        # Fetch image content directly via playwright request context
+                        img_resp = await page.request.get(raw_extracted)
+                        if img_resp.status == 200:
+                            img_bytes = await img_resp.body()
+                            b64_str = base64.b64encode(img_bytes).decode('utf-8')
+                            base64_data = f"data:image/png;base64,{b64_str}"
+                            print(f"✅ Fetched Gemini image from URL ({len(img_bytes)} bytes) and converted to DataURL!")
+                            break
+                    except Exception as ex:
+                        print(f"⚠️ Error fetching Gemini image URL: {ex}")
+                        base64_data = raw_extracted
+                        break
 
             await asyncio.sleep(1.0)
 
