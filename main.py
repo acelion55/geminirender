@@ -87,8 +87,9 @@ async def run_automation(raw_prompt: str):
     proxy_user = os.getenv("PROXY_USER", None)
     proxy_pass = os.getenv("PROXY_PASS", None)
 
+    is_headless = os.getenv("HEADLESS", "true").lower() == "true"
     launch_args = {
-        "headless": True,
+        "headless": is_headless,
         "args": [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -184,31 +185,26 @@ async def run_automation(raw_prompt: str):
             raise HTTPException(status_code=504, detail=f"Timeout waiting for prompt box. (URL: {curr_url})")
 
         await page.click(input_sel)
-        await page.fill(input_sel, formatted_prompt)
-        await asyncio.sleep(0.3)
+        await page.keyboard.type(formatted_prompt, delay=5)
+        await asyncio.sleep(0.5)
+        await page.keyboard.press("Enter")
+        await asyncio.sleep(0.5)
 
-        send_btn = await page.query_selector('button[aria-label*="Send message"], button[aria-label*="Send"]')
-        if send_btn and await send_btn.is_enabled():
-            print("[Gemini Render] Clicking Send button...")
-            await send_btn.click()
-        else:
-            print("[Gemini Render] Pressing Enter key...")
-            await page.keyboard.press("Enter")
-
-        print("[Gemini Render] Prompt sent. Polling for generated <img> element...")
+        print("[Gemini Render] Prompt sent via Enter key. Polling for generated <img> element...")
 
         start_time = asyncio.get_event_loop().time()
         base64_data = None
 
-        while (asyncio.get_event_loop().time() - start_time) < 65.0:
+        while (asyncio.get_event_loop().time() - start_time) < 95.0:
             raw_extracted = await page.evaluate('''async () => {
-                const imgs = Array.from(document.querySelectorAll('img'));
+                const imgs = Array.from(document.querySelectorAll('img, picture img, [role="img"]'));
                 const target = imgs.find(img => {
                     const src = img.src || img.currentSrc || '';
-                    const isValidSrc = src.startsWith('blob:') || src.includes('googleusercontent.com') || src.includes('/gg/') || src.includes('lh3.');
-                    const isNotIcon = !src.includes('s32-') && !src.includes('s64-') && !src.includes('s96-') && !src.includes('/a/') && !src.includes('avatar') && !src.includes('profile');
-                    const width = img.naturalWidth || img.width || 0;
-                    return isValidSrc && isNotIcon && width > 150;
+                    const isValidSrc = src.startsWith('blob:') || src.includes('googleusercontent') || src.includes('ggpht') || src.includes('/gg/') || src.includes('lh3') || src.startsWith('data:image');
+                    const isNotIcon = !src.includes('s32-') && !src.includes('s64-') && !src.includes('s96-') && !src.includes('/a/') && !src.includes('avatar') && !src.includes('profile') && !src.includes('favicon');
+                    const w = img.naturalWidth || img.clientWidth || img.width || 0;
+                    const h = img.naturalHeight || img.clientHeight || img.height || 0;
+                    return isValidSrc && isNotIcon && (w > 50 || h > 50);
                 });
 
                 if (!target) return null;
@@ -264,8 +260,9 @@ async def run_automation(raw_prompt: str):
             await asyncio.sleep(1.0)
 
         if not base64_data:
+            await page.screenshot(path="gemini_debug.png")
             text_dump = await page.inner_text("body")
-            print(f"❌ [Gemini Output Dump]: {text_dump[-300:]}")
+            print(f"❌ [Gemini Output Dump]: {text_dump[-400:]}")
             await browser.close()
             raise HTTPException(status_code=422, detail="Gemini did not generate an image.")
 

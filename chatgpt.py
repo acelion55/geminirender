@@ -61,8 +61,9 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
     proxy_user = os.getenv("PROXY_USER", None)
     proxy_pass = os.getenv("PROXY_PASS", None)
 
+    is_headless = os.getenv("HEADLESS", "true").lower() == "true"
     launch_args = {
-        "headless": True,
+        "headless": is_headless,
         "args": [
             "--no-sandbox",
             "--disable-setuid-sandbox",
