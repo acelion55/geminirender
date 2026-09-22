@@ -283,7 +283,7 @@ async def generate_dual_images(req: ImageRequest):
         # Run Gemini first
         gemini_res = None
         try:
-            gemini_res = await asyncio.wait_for(run_automation(req.prompt), timeout=90.0)
+            gemini_res = await asyncio.wait_for(run_automation(req.prompt), timeout=140.0)
         except Exception as e:
             print(f"⚠️ Gemini Dual Exception: {e}")
             gemini_res = e
