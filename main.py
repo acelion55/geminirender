@@ -40,11 +40,12 @@ class ImageRequest(BaseModel):
     prompt: str
 
 @app.get("/health")
-def health():
+async def health():
+    import time
     return {
         "status": "ok",
         "service": "gemini-render-service",
-        "timestamp": asyncio.get_event_loop().time()
+        "timestamp": time.time()
     }
 
 async def keep_awake():
