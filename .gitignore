@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
 cookies.json
+chatgpt_cookies.json
+.env
+*.log
+*.png
+active_tunnel_url.txt
 test_chat_mode.py
 test_runner.py
 test_output.txt

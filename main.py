@@ -1,10 +1,20 @@
 import os
 import json
+import sys
 import asyncio
 import base64
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Force UTF-8 output streams on Windows to prevent charmap encoding errors
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Robust import for playwright_stealth
 try:
@@ -21,17 +31,19 @@ app = FastAPI(title="Gemini 1:1 Automation Service")
 PORT = int(os.getenv("PORT", 8000))
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", f"http://localhost:{PORT}")
 
-CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "")
-CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "")
-CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
-
-if CLOUDINARY_CLOUD_NAME:
-    cloudinary.config(
-        cloud_name=CLOUDINARY_CLOUD_NAME,
-        api_key=CLOUDINARY_API_KEY,
-        api_secret=CLOUDINARY_API_SECRET,
-        secure=True
-    )
+def get_cloudinary_config():
+    cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip()
+    api_key = os.getenv("CLOUDINARY_API_KEY", "").strip()
+    api_secret = os.getenv("CLOUDINARY_API_SECRET", "").strip()
+    if cloud_name and api_key and api_secret:
+        cloudinary.config(
+            cloud_name=cloud_name,
+            api_key=api_key,
+            api_secret=api_secret,
+            secure=True
+        )
+        return True
+    return False
 
 COOKIES_JSON = os.getenv("GOOGLE_COOKIES_JSON", "")
 SECURE_1PSID = os.getenv("SECURE_1PSID", "")
@@ -81,7 +93,7 @@ async def run_automation(raw_prompt: str):
         formatted_prompt = f"Create an image of: {clean_prompt}"
     else:
         formatted_prompt = clean_prompt
-    print(f"🚀 Sent Prompt: {formatted_prompt}")
+    print(f"[Gemini Prompt] Sent Prompt: {formatted_prompt}")
 
     proxy_server = os.getenv("PROXY_SERVER", None)
     proxy_user = os.getenv("PROXY_USER", None)
@@ -111,7 +123,6 @@ async def run_automation(raw_prompt: str):
             viewport={"width": 1280, "height": 800},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
-
 
         cookies_env = None
         if os.path.exists("cookies.json"):
@@ -190,7 +201,7 @@ async def run_automation(raw_prompt: str):
         await page.keyboard.press("Enter")
         await asyncio.sleep(0.5)
 
-        print("[Gemini Render] Prompt sent via Enter key. Polling for generated <img> element...")
+        print("[Gemini Render] Prompt sent via Enter key. Polling for generated img element...")
 
         start_time = asyncio.get_event_loop().time()
         base64_data = None
@@ -240,7 +251,7 @@ async def run_automation(raw_prompt: str):
             if raw_extracted:
                 if raw_extracted.startswith("data:image"):
                     base64_data = raw_extracted
-                    print("✅ Found Gemini image and converted to DataURL!")
+                    print("[SUCCESS] Found Gemini image and converted to DataURL!")
                     break
                 elif raw_extracted.startswith("http"):
                     try:
@@ -250,10 +261,10 @@ async def run_automation(raw_prompt: str):
                             img_bytes = await img_resp.body()
                             b64_str = base64.b64encode(img_bytes).decode('utf-8')
                             base64_data = f"data:image/png;base64,{b64_str}"
-                            print(f"✅ Fetched Gemini image from URL ({len(img_bytes)} bytes) and converted to DataURL!")
+                            print(f"[SUCCESS] Fetched Gemini image from URL ({len(img_bytes)} bytes) and converted to DataURL!")
                             break
                     except Exception as ex:
-                        print(f"⚠️ Error fetching Gemini image URL: {ex}")
+                        print(f"[WARNING] Error fetching Gemini image URL: {ex}")
                         base64_data = raw_extracted
                         break
 
@@ -262,23 +273,27 @@ async def run_automation(raw_prompt: str):
         if not base64_data:
             await page.screenshot(path="gemini_debug.png")
             text_dump = await page.inner_text("body")
-            print(f"❌ [Gemini Output Dump]: {text_dump[-400:]}")
+            print(f"[ERROR] [Gemini Output Dump]: {text_dump[-400:]}")
             await browser.close()
             raise HTTPException(status_code=422, detail="Gemini did not generate an image.")
 
         await browser.close()
 
-        print("[Gemini Render] Uploading pure base64 to Cloudinary...")
-        if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
-            upload_res = await asyncio.to_thread(
-                cloudinary.uploader.upload,
-                base64_data,
-                folder="finonest_car_loans"
-            )
-            final_cdn_url = upload_res.get("secure_url")
-            print(f"[Gemini Render] Cloudinary upload successful: {final_cdn_url}")
+        print("[Gemini Render] Uploading image to Cloudinary...")
+        if get_cloudinary_config():
+            try:
+                upload_res = await asyncio.to_thread(
+                    cloudinary.uploader.upload,
+                    base64_data,
+                    folder="finonest_car_loans"
+                )
+                final_cdn_url = upload_res.get("secure_url")
+                print(f"[Gemini Render] Cloudinary upload successful: {final_cdn_url}")
+            except Exception as ce:
+                print(f"[Gemini Render] Cloudinary upload error: {ce}")
+                final_cdn_url = base64_data
         else:
-            print("[Gemini Render] Warning: Cloudinary keys not found. Returning base64 URI.")
+            print("[Gemini Render] Warning: Cloudinary keys not found in environment. Returning base64/URL directly.")
             final_cdn_url = base64_data
 
         return {
@@ -309,23 +324,18 @@ async def generate_chatgpt_image(req: ImageRequest):
 @app.post("/generate-dual-images")
 async def generate_dual_images(req: ImageRequest):
     try:
-        print(f"🚀 Launching Gemini + ChatGPT generation for: {req.prompt}")
+        print(f"[DUAL GENERATION] Launching Gemini + ChatGPT generation concurrently for prompt: {req.prompt}")
         
-        # Run Gemini first
-        gemini_res = None
-        try:
-            gemini_res = await asyncio.wait_for(run_automation(req.prompt), timeout=140.0)
-        except Exception as e:
-            print(f"⚠️ Gemini Dual Exception: {e}")
-            gemini_res = e
+        gemini_task = asyncio.wait_for(run_automation(req.prompt), timeout=110.0)
+        chatgpt_task = asyncio.wait_for(run_chatgpt_automation(req.prompt), timeout=110.0)
 
-        # Run ChatGPT second
-        chatgpt_res = None
-        try:
-            chatgpt_res = await asyncio.wait_for(run_chatgpt_automation(req.prompt), timeout=90.0)
-        except Exception as e:
-            print(f"⚠️ ChatGPT Dual Exception: {e}")
-            chatgpt_res = e
+        results = await asyncio.gather(gemini_task, chatgpt_task, return_exceptions=True)
+        gemini_res, chatgpt_res = results[0], results[1]
+
+        if isinstance(gemini_res, Exception):
+            print(f"[WARNING] Gemini Dual Exception: {gemini_res}")
+        if isinstance(chatgpt_res, Exception):
+            print(f"[WARNING] ChatGPT Dual Exception: {chatgpt_res}")
 
         gemini_url = gemini_res.get("image_url") if isinstance(gemini_res, dict) else None
         chatgpt_url = chatgpt_res.get("image_url") if isinstance(chatgpt_res, dict) else None
@@ -344,8 +354,6 @@ async def generate_dual_images(req: ImageRequest):
                 "error": str(chatgpt_res) if isinstance(chatgpt_res, Exception) else None
             }
         }
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Dual generation timed out after 150 seconds.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

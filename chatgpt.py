@@ -1,9 +1,20 @@
 import os
 import json
+import sys
 import asyncio
 import base64
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Force UTF-8 output streams on Windows to prevent charmap encoding errors
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     from playwright_stealth import Stealth
     STEALTH_AVAILABLE = True
@@ -55,7 +66,7 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
         formatted_prompt = f"Create an image of: {clean_prompt}"
     else:
         formatted_prompt = clean_prompt
-    print(f"🚀 [ChatGPT] Sent Prompt: {formatted_prompt}")
+    print(f"[ChatGPT] Sent Prompt: {formatted_prompt}")
 
     proxy_server = os.getenv("PROXY_SERVER", None)
     proxy_user = os.getenv("PROXY_USER", None)
@@ -283,7 +294,7 @@ async def run_chatgpt_automation(raw_prompt: str) -> Dict[str, Any]:
                     const el = document.querySelector("div[data-message-author-role='assistant']");
                     return el ? el.innerText : document.body.innerText;
                 }""")
-                print(f"⚠️ [ChatGPT Output Dump]: {text_content[:300]}")
+                print(f"[WARNING] [ChatGPT Output Dump]: {text_content[:300]}")
             except Exception:
                 pass
             await browser.close()
